@@ -45,7 +45,8 @@ export function mapErr<T, E, F>(
   result: Result<T, E>,
   fn: (error: E) => F
 ): Result<T, F> {
-  return result.ok ? result : Err(fn(result.error));
+  if (result.ok) return result;
+  return Err(fn(result.error));
 }
 
 /** Chain Results (flatMap) */
