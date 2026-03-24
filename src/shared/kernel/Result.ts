@@ -6,9 +6,9 @@
  * @template E - Error value type
  */
 
-export type Result<T, E> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly error: E };
+interface ResultOk<T> { readonly ok: true; readonly value: T }
+interface ResultErr<E> { readonly ok: false; readonly error: E }
+export type Result<T, E> = ResultOk<T> | ResultErr<E>;
 
 /** Create a success Result */
 export function Ok<T>(value: T): Result<T, never> {
