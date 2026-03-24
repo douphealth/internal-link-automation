@@ -36,7 +36,8 @@ export function map<T, U, E>(
   result: Result<T, E>,
   fn: (value: T) => U
 ): Result<U, E> {
-  return result.ok ? Ok(fn(result.value)) : result;
+  if (result.ok) return Ok(fn(result.value));
+  return result;
 }
 
 /** Map the error value of a Result */
