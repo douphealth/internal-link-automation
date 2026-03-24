@@ -1,8 +1,16 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { AddSiteDialog } from '@/components/sites/AddSiteDialog';
 import { SiteCard } from '@/components/sites/SiteCard';
-import { motion } from 'framer-motion';
+import { SiteCardSkeleton } from '@/components/shared/Skeletons';
+import { PageHeader } from '@/components/shared/PageHeader';
+import { EmptyState } from '@/components/shared/EmptyState';
+import { StaggerList, StaggerItem } from '@/components/shared/StaggerList';
+import { Globe, Search } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { useState } from 'react';
 
 interface Site {
   id: string;
@@ -12,62 +20,94 @@ interface Site {
   created_at: string;
 }
 
-export default function Sites() {
-  const [sites, setSites] = useState<Site[]>([]);
-  const [postCounts, setPostCounts] = useState<Record<string, number>>({});
+function useSites() {
+  return useQuery({
+    queryKey: ['sites'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('sites')
+        .select('id, name, url, source_type, created_at')
+        .order('created_at', { ascending: false });
+      return (data ?? []) as Site[];
+    },
+    staleTime: 15_000,
+  });
+}
 
-  const loadSites = useCallback(async () => {
-    const { data } = await supabase
-      .from('sites')
-      .select('id, name, url, source_type, created_at')
-      .order('created_at', { ascending: false });
-    const sitesData = (data ?? []) as Site[];
-    setSites(sitesData);
-
-    // Get post counts per site
-    if (sitesData.length > 0) {
+function usePostCounts(siteIds: string[]) {
+  return useQuery({
+    queryKey: ['post-counts', siteIds],
+    queryFn: async () => {
       const counts: Record<string, number> = {};
-      for (const site of sitesData) {
+      for (const id of siteIds) {
         const { count } = await supabase
           .from('posts')
           .select('id', { count: 'exact', head: true })
-          .eq('site_id', site.id);
-        counts[site.id] = count ?? 0;
+          .eq('site_id', id);
+        counts[id] = count ?? 0;
       }
-      setPostCounts(counts);
-    }
-  }, []);
+      return counts;
+    },
+    enabled: siteIds.length > 0,
+    staleTime: 30_000,
+  });
+}
 
-  useEffect(() => {
-    loadSites();
-  }, [loadSites]);
+export default function Sites() {
+  const [search, setSearch] = useState('');
+  const { data: sites = [], isLoading, refetch } = useSites();
+  const { data: postCounts = {} } = usePostCounts(sites.map(s => s.id));
+
+  const filtered = search
+    ? sites.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || s.url.toLowerCase().includes(search.toLowerCase()))
+    : sites;
 
   return (
     <div className="space-y-6">
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Sites</h1>
-          <p className="text-muted-foreground mt-1">Manage your websites for internal link analysis.</p>
-        </div>
-        <AddSiteDialog onSiteAdded={loadSites} />
-      </motion.div>
+      <PageHeader
+        title="Sites"
+        description="Manage your websites for internal link analysis."
+        badge={<Badge variant="secondary" className="text-xs font-mono">{sites.length}</Badge>}
+        actions={<AddSiteDialog onSiteAdded={() => refetch()} />}
+      />
 
-      {sites.length === 0 ? (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col items-center justify-center rounded-xl border border-dashed py-16"
-        >
-          <p className="text-lg font-medium">No sites yet</p>
-          <p className="text-sm text-muted-foreground mt-1 mb-4">Add your first site to start analyzing internal links.</p>
-          <AddSiteDialog onSiteAdded={loadSites} />
-        </motion.div>
-      ) : (
-        <div className="space-y-3">
-          {sites.map((site, i) => (
-            <SiteCard key={site.id} site={site} postsCount={postCounts[site.id] ?? 0} index={i} />
-          ))}
+      {sites.length > 0 && (
+        <div className="relative max-w-sm">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search sites…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="pl-9 h-9 text-sm"
+          />
         </div>
+      )}
+
+      {isLoading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => <SiteCardSkeleton key={i} />)}
+        </div>
+      ) : filtered.length === 0 && !search ? (
+        <EmptyState
+          icon={Globe}
+          title="No sites yet"
+          description="Add your first site to start discovering internal linking opportunities across your content."
+          action={<AddSiteDialog onSiteAdded={() => refetch()} />}
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={Search}
+          title="No results"
+          description={`No sites matching "${search}". Try a different search term.`}
+        />
+      ) : (
+        <StaggerList>
+          {filtered.map((site) => (
+            <StaggerItem key={site.id}>
+              <SiteCard site={site} postsCount={postCounts[site.id] ?? 0} />
+            </StaggerItem>
+          ))}
+        </StaggerList>
       )}
     </div>
   );

@@ -4,33 +4,55 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout/AppLayout";
-import Index from "./pages/Index";
-import Sites from "./pages/Sites";
-import SiteDetail from "./pages/SiteDetail";
-import LinkSuggestions from "./pages/LinkSuggestions";
-import Analytics from "./pages/Analytics";
-import SettingsPage from "./pages/SettingsPage";
-import NotFound from "./pages/NotFound";
+import { lazy, Suspense } from "react";
+import { Loader2 } from "lucide-react";
 
-const queryClient = new QueryClient();
+// Lazy-loaded route components
+const Dashboard = lazy(() => import("./pages/Index"));
+const Sites = lazy(() => import("./pages/Sites"));
+const SiteDetail = lazy(() => import("./pages/SiteDetail"));
+const LinkSuggestions = lazy(() => import("./pages/LinkSuggestions"));
+const Analytics = lazy(() => import("./pages/Analytics"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+      staleTime: 15_000,
+    },
+  },
+});
+
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center py-24">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
+    <TooltipProvider delayDuration={300}>
       <Toaster />
-      <Sonner />
+      <Sonner position="bottom-right" richColors closeButton />
       <BrowserRouter>
-        <Routes>
-          <Route element={<AppLayout />}>
-            <Route path="/" element={<Index />} />
-            <Route path="/sites" element={<Sites />} />
-            <Route path="/sites/:siteId" element={<SiteDetail />} />
-            <Route path="/suggestions" element={<LinkSuggestions />} />
-            <Route path="/analytics" element={<Analytics />} />
-            <Route path="/settings" element={<SettingsPage />} />
-          </Route>
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            <Route element={<AppLayout />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/sites" element={<Sites />} />
+              <Route path="/sites/:siteId" element={<SiteDetail />} />
+              <Route path="/suggestions" element={<LinkSuggestions />} />
+              <Route path="/analytics" element={<Analytics />} />
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

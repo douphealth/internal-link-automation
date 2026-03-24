@@ -1,12 +1,18 @@
-import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, ExternalLink, RefreshCw, FileText } from 'lucide-react';
+import { PageHeader } from '@/components/shared/PageHeader';
+import { EmptyState } from '@/components/shared/EmptyState';
+import { PostListSkeleton } from '@/components/shared/Skeletons';
+import { ArrowLeft, ExternalLink, RefreshCw, FileText, Search, Loader2 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
+import { useState, useCallback } from 'react';
+import { cn } from '@/lib/utils';
 
 interface Post {
   id: string;
@@ -18,29 +24,41 @@ interface Post {
   fetched_at: string | null;
 }
 
-export default function SiteDetail() {
-  const { siteId } = useParams<{ siteId: string }>();
-  const [site, setSite] = useState<any>(null);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [crawling, setCrawling] = useState(false);
+function useSite(siteId: string | undefined) {
+  return useQuery({
+    queryKey: ['site', siteId],
+    queryFn: async () => {
+      const { data } = await supabase.from('sites').select('*').eq('id', siteId!).single();
+      return data;
+    },
+    enabled: !!siteId,
+  });
+}
 
-  useEffect(() => {
-    if (!siteId) return;
-    async function load() {
-      const { data: siteData } = await supabase.from('sites').select('*').eq('id', siteId).single();
-      setSite(siteData);
-
-      const { data: postsData } = await supabase
+function useSitePosts(siteId: string | undefined) {
+  return useQuery({
+    queryKey: ['site-posts', siteId],
+    queryFn: async () => {
+      const { data } = await supabase
         .from('posts')
         .select('id, title, slug, url, word_count, status, fetched_at')
-        .eq('site_id', siteId)
+        .eq('site_id', siteId!)
         .order('fetched_at', { ascending: false });
-      setPosts((postsData ?? []) as Post[]);
-    }
-    load();
-  }, [siteId]);
+      return (data ?? []) as Post[];
+    },
+    enabled: !!siteId,
+    staleTime: 15_000,
+  });
+}
 
-  const handleCrawl = async () => {
+export default function SiteDetail() {
+  const { siteId } = useParams<{ siteId: string }>();
+  const { data: site, isLoading: siteLoading } = useSite(siteId);
+  const { data: posts = [], isLoading: postsLoading, refetch } = useSitePosts(siteId);
+  const [crawling, setCrawling] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const handleCrawl = useCallback(async () => {
     if (!site) return;
     setCrawling(true);
     try {
@@ -49,80 +67,151 @@ export default function SiteDetail() {
         body: { site_id: site.id, url: site.url },
       });
       if (error) throw error;
-      toast.success(`Crawled ${data?.posts?.length ?? data?.pages?.length ?? 0} pages`);
-      // Reload posts
-      const { data: postsData } = await supabase
-        .from('posts')
-        .select('id, title, slug, url, word_count, status, fetched_at')
-        .eq('site_id', siteId)
-        .order('fetched_at', { ascending: false });
-      setPosts((postsData ?? []) as Post[]);
+      const count = data?.posts?.length ?? data?.pages?.length ?? 0;
+      toast.success(`Crawled ${count} pages`, { description: 'Pages have been indexed for analysis.' });
+      refetch();
     } catch (err: any) {
-      toast.error('Crawl failed: ' + (err.message || 'Unknown error'));
+      toast.error('Crawl failed', { description: err.message || 'Unknown error' });
     } finally {
       setCrawling(false);
     }
-  };
+  }, [site, refetch]);
+
+  const filtered = search
+    ? posts.filter(p => p.title.toLowerCase().includes(search.toLowerCase()) || p.url.toLowerCase().includes(search.toLowerCase()))
+    : posts;
+
+  if (siteLoading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   if (!site) {
-    return <div className="py-8 text-center text-muted-foreground">Loading…</div>;
+    return (
+      <EmptyState
+        icon={FileText}
+        title="Site not found"
+        description="This site doesn't exist or you don't have access."
+        action={<Link to="/sites"><Button variant="outline">Back to Sites</Button></Link>}
+      />
+    );
   }
+
+  const isWP = site.source_type === 'wordpress';
+  const totalWords = posts.reduce((sum, p) => sum + (p.word_count ?? 0), 0);
 
   return (
     <div className="space-y-6">
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <Link to="/sites" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4">
-          <ArrowLeft className="h-4 w-4" /> Back to sites
-        </Link>
+      <Link to="/sites" className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
+        <ArrowLeft className="h-3.5 w-3.5" /> Back to sites
+      </Link>
 
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">{site.name}</h1>
-            <div className="flex items-center gap-2 mt-1">
-              <Badge variant="secondary">{site.source_type === 'wordpress' ? 'WordPress' : 'Generic'}</Badge>
-              <a href={site.url} target="_blank" rel="noopener noreferrer" className="text-sm text-muted-foreground hover:text-primary flex items-center gap-1">
-                {site.url} <ExternalLink className="h-3 w-3" />
-              </a>
-            </div>
-          </div>
-          <Button onClick={handleCrawl} disabled={crawling}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${crawling ? 'animate-spin' : ''}`} />
+      <PageHeader
+        title={site.name}
+        badge={
+          <Badge variant="secondary" className={cn(
+            'text-[10px] font-semibold uppercase tracking-wider',
+            isWP ? 'bg-primary/8 text-primary' : 'bg-accent/8 text-accent'
+          )}>
+            {isWP ? 'WordPress' : 'Website'}
+          </Badge>
+        }
+        description={
+          <a href={site.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors">
+            {site.url.replace(/^https?:\/\//, '')} <ExternalLink className="h-3 w-3" />
+          </a>
+        }
+        actions={
+          <Button onClick={handleCrawl} disabled={crawling} size="sm">
+            {crawling ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-1.5 h-4 w-4" />
+            )}
             {crawling ? 'Crawling…' : 'Crawl Pages'}
           </Button>
-        </div>
-      </motion.div>
+        }
+      />
+
+      {/* Stats strip */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: 'Pages', value: posts.length },
+          { label: 'Total Words', value: totalWords.toLocaleString() },
+          { label: 'Avg Words', value: posts.length > 0 ? Math.round(totalWords / posts.length).toLocaleString() : '0' },
+        ].map((stat) => (
+          <Card key={stat.label}>
+            <CardContent className="py-3 px-4 text-center">
+              <p className="text-lg font-bold tabular-nums">{stat.value}</p>
+              <p className="text-[11px] font-medium text-muted-foreground">{stat.label}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            Pages ({posts.length})
-          </CardTitle>
+        <CardHeader className="pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <CardTitle className="text-base font-semibold flex items-center gap-2">
+                <FileText className="h-4 w-4 text-primary" />
+                Pages
+                <Badge variant="secondary" className="text-[10px] font-mono ml-1">{posts.length}</Badge>
+              </CardTitle>
+              <CardDescription className="text-xs mt-0.5">Indexed content from this site</CardDescription>
+            </div>
+            {posts.length > 0 && (
+              <div className="relative w-full sm:w-56">
+                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Filter pages…"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  className="pl-8 h-8 text-xs"
+                />
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
-          {posts.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-6 text-center">
-              No pages indexed yet. Click "Crawl Pages" to fetch content from this site.
-            </p>
+          {postsLoading ? (
+            <PostListSkeleton />
+          ) : !filtered.length ? (
+            <EmptyState
+              icon={FileText}
+              title={search ? 'No matching pages' : 'No pages indexed yet'}
+              description={search ? `No pages matching "${search}".` : 'Click "Crawl Pages" to fetch and index content from this site.'}
+            />
           ) : (
             <div className="divide-y">
-              {posts.map((post, i) => (
+              {filtered.map((post, i) => (
                 <motion.div
                   key={post.id}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  transition={{ delay: i * 0.02 }}
-                  className="flex items-center justify-between py-3"
+                  transition={{ delay: Math.min(i * 0.02, 0.3) }}
+                  className="flex items-center justify-between py-3 gap-4 group"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="font-medium text-sm truncate">{post.title}</p>
-                    <p className="text-xs text-muted-foreground truncate mt-0.5">{post.url}</p>
+                    <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                      {post.title}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground truncate mt-0.5 font-mono">
+                      {post.slug || post.url.replace(/^https?:\/\/[^/]+/, '')}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0 ml-4">
-                    {post.word_count && (
-                      <span className="text-xs text-muted-foreground">{post.word_count} words</span>
+                  <div className="flex items-center gap-3 shrink-0">
+                    {post.word_count != null && (
+                      <span className="text-[11px] text-muted-foreground font-mono tabular-nums hidden sm:inline">
+                        {post.word_count.toLocaleString()} words
+                      </span>
                     )}
-                    <Badge variant="outline" className="text-xs">{post.status ?? 'draft'}</Badge>
+                    <Badge variant="outline" className="text-[10px] font-medium capitalize">
+                      {post.status ?? 'draft'}
+                    </Badge>
                   </div>
                 </motion.div>
               ))}
