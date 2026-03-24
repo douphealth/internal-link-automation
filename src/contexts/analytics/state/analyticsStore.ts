@@ -4,7 +4,7 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { AnalyticsEvent, AnalyticsSummary } from './types';
+import type { AnalyticsEvent, AnalyticsSummary } from '../types';
 
 interface AnalyticsState {
   recentEvents: AnalyticsEvent[];

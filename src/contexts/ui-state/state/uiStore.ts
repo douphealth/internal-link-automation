@@ -5,7 +5,7 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { AppView, BatchProgress, Notification } from './types';
+import type { AppView, BatchProgress, Notification } from '../types';
 
 interface UIState {
   currentView: AppView;

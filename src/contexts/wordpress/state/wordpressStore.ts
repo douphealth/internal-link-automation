@@ -5,7 +5,7 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { SyncedPost, WPPagination } from './types';
+import type { SyncedPost, WPPagination } from '../types';
 
 interface WordPressState {
   posts: SyncedPost[];

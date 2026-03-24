@@ -113,5 +113,5 @@ export async function getEmbedding(
     return Err({ type: 'QUERY_ERROR', message: error.message });
   }
 
-  return Ok((data?.embedding as number[] | undefined) || null);
+  return Ok((data?.embedding as unknown as number[] | undefined) || null);
 }

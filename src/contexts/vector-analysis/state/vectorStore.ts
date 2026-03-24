@@ -4,7 +4,7 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { Cluster, SimilarPost } from './types';
+import type { Cluster, SimilarPost } from '../types';
 
 interface VectorState {
   embeddedPostIds: Set<string>;

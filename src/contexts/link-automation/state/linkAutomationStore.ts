@@ -5,7 +5,7 @@
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { LinkSuggestion, LinkScanResult } from './types';
+import type { LinkSuggestion, LinkScanResult } from '../types';
 
 interface LinkAutomationState {
   suggestions: LinkSuggestion[];
