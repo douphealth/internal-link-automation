@@ -57,7 +57,6 @@ export function flatMap<T, U, E>(
   if (result.ok) return fn(result.value);
   return Err(result.error);
 }
-}
 
 /** Convert a Promise to a Result, catching any thrown errors */
 export async function fromPromise<T>(
