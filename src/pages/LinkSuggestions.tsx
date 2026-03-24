@@ -1,11 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Check, X, Link2 } from 'lucide-react';
+import { PageHeader } from '@/components/shared/PageHeader';
+import { EmptyState } from '@/components/shared/EmptyState';
+import { SuggestionCardSkeleton } from '@/components/shared/Skeletons';
+import { StaggerList, StaggerItem } from '@/components/shared/StaggerList';
+import { Check, X, Link2, ExternalLink, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
-import { motion } from 'framer-motion';
+import { cn } from '@/lib/utils';
 
 interface Suggestion {
   id: string;
@@ -18,32 +23,41 @@ interface Suggestion {
   target_post: { title: string; url: string } | null;
 }
 
+const statusStyles: Record<string, string> = {
+  pending: 'bg-warning/10 text-warning border-warning/20',
+  accepted: 'bg-primary/10 text-primary border-primary/20',
+  applied: 'bg-success/10 text-success border-success/20',
+  rejected: 'bg-destructive/10 text-destructive border-destructive/20',
+};
+
+const filters = ['all', 'pending', 'accepted', 'applied', 'rejected'] as const;
+
+function useSuggestions(filter: string) {
+  return useQuery({
+    queryKey: ['suggestions', filter],
+    queryFn: async () => {
+      let query = supabase
+        .from('link_suggestions')
+        .select(`
+          id, anchor_text, similarity_score, context_snippet, status, created_at,
+          source_post:posts!link_suggestions_source_post_id_fkey(title, url),
+          target_post:posts!link_suggestions_target_post_id_fkey(title, url)
+        `)
+        .order('similarity_score', { ascending: false })
+        .limit(50);
+
+      if (filter !== 'all') query = query.eq('status', filter);
+      const { data } = await query;
+      return (data ?? []) as unknown as Suggestion[];
+    },
+    staleTime: 15_000,
+  });
+}
+
 export default function LinkSuggestions() {
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [filter, setFilter] = useState<string>('all');
-
-  useEffect(() => {
-    loadSuggestions();
-  }, [filter]);
-
-  async function loadSuggestions() {
-    let query = supabase
-      .from('link_suggestions')
-      .select(`
-        id, anchor_text, similarity_score, context_snippet, status, created_at,
-        source_post:posts!link_suggestions_source_post_id_fkey(title, url),
-        target_post:posts!link_suggestions_target_post_id_fkey(title, url)
-      `)
-      .order('similarity_score', { ascending: false })
-      .limit(50);
-
-    if (filter !== 'all') {
-      query = query.eq('status', filter);
-    }
-
-    const { data } = await query;
-    setSuggestions((data ?? []) as unknown as Suggestion[]);
-  }
+  const queryClient = useQueryClient();
+  const { data: suggestions = [], isLoading } = useSuggestions(filter);
 
   async function updateStatus(id: string, status: string) {
     const updates: Record<string, any> = { status };
@@ -51,107 +65,128 @@ export default function LinkSuggestions() {
 
     const { error } = await supabase.from('link_suggestions').update(updates).eq('id', id);
     if (error) {
-      toast.error('Failed to update');
+      toast.error('Failed to update suggestion');
     } else {
-      toast.success(`Suggestion ${status}`);
-      loadSuggestions();
+      toast.success(`Suggestion ${status}`, {
+        description: status === 'accepted' ? 'Ready to be applied.' : undefined,
+      });
+      queryClient.invalidateQueries({ queryKey: ['suggestions'] });
     }
   }
 
-  const statusColor: Record<string, string> = {
-    pending: 'bg-warning/10 text-warning border-warning/20',
-    accepted: 'bg-primary/10 text-primary border-primary/20',
-    applied: 'bg-success/10 text-success border-success/20',
-    rejected: 'bg-destructive/10 text-destructive border-destructive/20',
-  };
-
-  const filters = ['all', 'pending', 'accepted', 'applied', 'rejected'];
-
   return (
     <div className="space-y-6">
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <h1 className="text-3xl font-bold tracking-tight">Link Suggestions</h1>
-        <p className="text-muted-foreground mt-1">Review and manage AI-generated internal link suggestions.</p>
-      </motion.div>
+      <PageHeader
+        title="Link Suggestions"
+        description="Review and manage AI-generated internal link suggestions."
+        badge={<Badge variant="secondary" className="text-xs font-mono">{suggestions.length}</Badge>}
+      />
 
-      <div className="flex gap-2">
+      {/* Filter tabs */}
+      <div className="flex gap-1.5 flex-wrap">
         {filters.map((f) => (
           <Button
             key={f}
             variant={filter === f ? 'default' : 'outline'}
             size="sm"
             onClick={() => setFilter(f)}
-            className="capitalize"
+            className={cn(
+              'h-8 text-xs capitalize',
+              filter === f ? '' : 'border-border hover:bg-muted'
+            )}
           >
             {f}
           </Button>
         ))}
       </div>
 
-      {suggestions.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <Link2 className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
-            <p className="text-lg font-medium">No suggestions found</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Crawl some sites and run the analysis to generate link suggestions.
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
+      {isLoading ? (
         <div className="space-y-3">
-          {suggestions.map((s, i) => (
-            <motion.div
-              key={s.id}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.03 }}
-            >
-              <Card>
-                <CardContent className="p-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className={statusColor[s.status] || ''}>{s.status}</Badge>
-                        <span className="text-xs text-muted-foreground font-mono">
+          {Array.from({ length: 3 }).map((_, i) => <SuggestionCardSkeleton key={i} />)}
+        </div>
+      ) : !suggestions.length ? (
+        <EmptyState
+          icon={Link2}
+          title={filter !== 'all' ? `No ${filter} suggestions` : 'No suggestions yet'}
+          description={
+            filter !== 'all'
+              ? `No suggestions with status "${filter}". Try a different filter.`
+              : 'Crawl some sites and run the analysis to generate link suggestions.'
+          }
+        />
+      ) : (
+        <StaggerList>
+          {suggestions.map((s) => (
+            <StaggerItem key={s.id}>
+              <Card className="transition-all duration-150 hover:shadow-soft">
+                <CardContent className="p-4 sm:p-5">
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0 space-y-2.5">
+                      {/* Status & score */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge variant="outline" className={cn('text-[10px] font-semibold capitalize', statusStyles[s.status])}>
+                          {s.status}
+                        </Badge>
+                        <span className="text-[11px] text-muted-foreground font-mono tabular-nums">
                           {(s.similarity_score * 100).toFixed(0)}% match
                         </span>
                       </div>
-                      <p className="font-semibold">
-                        "{s.anchor_text}"
+
+                      {/* Anchor text */}
+                      <p className="font-semibold text-sm">
+                        <span className="text-primary">"</span>
+                        {s.anchor_text}
+                        <span className="text-primary">"</span>
                       </p>
-                      <div className="text-sm text-muted-foreground space-y-0.5">
-                        <p>
-                          <span className="text-foreground font-medium">From:</span>{' '}
-                          {s.source_post?.title ?? 'Unknown'}
-                        </p>
-                        <p>
-                          <span className="text-foreground font-medium">To:</span>{' '}
-                          {s.target_post?.title ?? 'Unknown'}
-                        </p>
+
+                      {/* From → To */}
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1 min-w-0">
+                          <span className="font-medium text-foreground shrink-0">From:</span>
+                          <span className="truncate">{s.source_post?.title ?? 'Unknown'}</span>
+                        </span>
+                        <ArrowRight className="h-3 w-3 shrink-0 hidden sm:block text-muted-foreground/40" />
+                        <span className="flex items-center gap-1 min-w-0">
+                          <span className="font-medium text-foreground shrink-0">To:</span>
+                          <span className="truncate">{s.target_post?.title ?? 'Unknown'}</span>
+                        </span>
                       </div>
+
+                      {/* Context */}
                       {s.context_snippet && (
-                        <p className="text-xs text-muted-foreground italic bg-muted rounded p-2 mt-2">
+                        <p className="text-[11px] text-muted-foreground italic bg-muted/60 rounded-md px-3 py-2 leading-relaxed">
                           …{s.context_snippet}…
                         </p>
                       )}
                     </div>
+
+                    {/* Actions */}
                     {s.status === 'pending' && (
-                      <div className="flex gap-2 shrink-0">
-                        <Button size="sm" variant="outline" onClick={() => updateStatus(s.id, 'accepted')}>
-                          <Check className="h-4 w-4 mr-1" /> Accept
+                      <div className="flex sm:flex-col gap-2 shrink-0">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs border-success/30 text-success hover:bg-success/8 hover:text-success"
+                          onClick={() => updateStatus(s.id, 'accepted')}
+                        >
+                          <Check className="h-3.5 w-3.5 mr-1" /> Accept
                         </Button>
-                        <Button size="sm" variant="ghost" onClick={() => updateStatus(s.id, 'rejected')}>
-                          <X className="h-4 w-4 mr-1" /> Reject
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 text-xs text-muted-foreground hover:text-destructive"
+                          onClick={() => updateStatus(s.id, 'rejected')}
+                        >
+                          <X className="h-3.5 w-3.5 mr-1" /> Reject
                         </Button>
                       </div>
                     )}
                   </div>
                 </CardContent>
               </Card>
-            </motion.div>
+            </StaggerItem>
           ))}
-        </div>
+        </StaggerList>
       )}
     </div>
   );
