@@ -89,4 +89,4 @@ export interface AppEvents {
 }
 
 /** Singleton application event bus */
-export const appEventBus = createEventBus<AppEvents>();
+export const appEventBus = createEventBus<AppEvents & Record<string, unknown>>();

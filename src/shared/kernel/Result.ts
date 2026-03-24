@@ -54,7 +54,8 @@ export function flatMap<T, U, E>(
   result: Result<T, E>,
   fn: (value: T) => Result<U, E>
 ): Result<U, E> {
-  return result.ok ? fn(result.value) : result;
+  if (result.ok) return fn(result.value);
+  return result;
 }
 
 /** Convert a Promise to a Result, catching any thrown errors */
