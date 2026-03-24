@@ -37,7 +37,7 @@ export function map<T, U, E>(
   fn: (value: T) => U
 ): Result<U, E> {
   if (result.ok) return Ok(fn(result.value));
-  return result;
+  return Err(result.error);
 }
 
 /** Map the error value of a Result */
@@ -45,7 +45,7 @@ export function mapErr<T, E, F>(
   result: Result<T, E>,
   fn: (error: E) => F
 ): Result<T, F> {
-  if (result.ok) return result;
+  if (result.ok) return Ok(result.value);
   return Err(fn(result.error));
 }
 
@@ -55,7 +55,8 @@ export function flatMap<T, U, E>(
   fn: (value: T) => Result<U, E>
 ): Result<U, E> {
   if (result.ok) return fn(result.value);
-  return result;
+  return Err(result.error);
+}
 }
 
 /** Convert a Promise to a Result, catching any thrown errors */
