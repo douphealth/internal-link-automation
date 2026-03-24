@@ -20,7 +20,7 @@ async function flushLogs(): Promise<void> {
     .insert(
       batch.map(entry => ({
         event_type: `log:${entry.level}`,
-        payload: entry as unknown as Record<string, unknown>,
+        payload: JSON.parse(JSON.stringify(entry)),
       }))
     );
 

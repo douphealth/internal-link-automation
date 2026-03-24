@@ -96,11 +96,11 @@ export function BatchProgressDashboard({ batchJobId }: Props) {
                     isFuture && 'text-muted-foreground/50'
                   )}
                 >
-                  <span className={cn(isPast && 'text-green-500', isActive && 'text-primary')}>
+                  <span className={cn(isPast && 'text-primary', isActive && 'text-primary')}>
                     {isPast ? <CheckCircle2 className="h-4 w-4" /> : isActive ? <Loader2 className="h-4 w-4 animate-spin" /> : config.icon}
                   </span>
                   <span className="flex-1">{config.label}</span>
-                  {isPast && <Badge variant="outline" className="text-[10px] text-green-600 border-green-200">Done</Badge>}
+                  {isPast && <Badge variant="outline" className="text-[10px] text-primary border-primary/20">Done</Badge>}
                   {isActive && <Badge variant="outline" className="text-[10px] text-primary border-primary/20">Running</Badge>}
                 </div>
               );

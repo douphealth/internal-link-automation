@@ -51,15 +51,16 @@ export async function retryWithBackoff<T, E>(
 
     if (isOk(result)) return result;
 
-    lastError = result.error;
+    const errResult = result as { ok: false; error: E };
+    lastError = errResult.error;
 
-    if (cfg.retryableCheck && !cfg.retryableCheck(result.error)) {
+    if (cfg.retryableCheck && !cfg.retryableCheck(errResult.error)) {
       return result;
     }
 
     if (attempt < cfg.maxAttempts) {
       const delayMs = computeDelay(attempt, cfg);
-      cfg.onRetry?.(attempt, delayMs, result.error);
+      cfg.onRetry?.(attempt, delayMs, errResult.error);
       await sleep(delayMs);
     }
   }
