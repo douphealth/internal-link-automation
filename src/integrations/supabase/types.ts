@@ -216,40 +216,93 @@ export type Database = {
       }
       posts: {
         Row: {
+          content: string | null
           content_hash: string
           fetched_at: string | null
           id: string
+          site_id: string | null
           slug: string
+          source_type: string | null
           status: string | null
           title: string
           updated_at: string | null
           url: string
           word_count: number | null
-          wp_post_id: number
+          wp_post_id: number | null
         }
         Insert: {
+          content?: string | null
           content_hash: string
           fetched_at?: string | null
           id?: string
+          site_id?: string | null
           slug: string
+          source_type?: string | null
           status?: string | null
           title: string
           updated_at?: string | null
           url: string
           word_count?: number | null
-          wp_post_id: number
+          wp_post_id?: number | null
         }
         Update: {
+          content?: string | null
           content_hash?: string
           fetched_at?: string | null
           id?: string
+          site_id?: string | null
           slug?: string
+          source_type?: string | null
           status?: string | null
           title?: string
           updated_at?: string | null
           url?: string
           word_count?: number | null
-          wp_post_id?: number
+          wp_post_id?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "posts_site_id_fkey"
+            columns: ["site_id"]
+            isOneToOne: false
+            referencedRelation: "sites"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sites: {
+        Row: {
+          created_at: string | null
+          id: string
+          name: string
+          source_type: string
+          updated_at: string | null
+          url: string
+          wp_app_password: string | null
+          wp_rest_url: string | null
+          wp_username: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          name: string
+          source_type?: string
+          updated_at?: string | null
+          url: string
+          wp_app_password?: string | null
+          wp_rest_url?: string | null
+          wp_username?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          name?: string
+          source_type?: string
+          updated_at?: string | null
+          url?: string
+          wp_app_password?: string | null
+          wp_rest_url?: string | null
+          wp_username?: string | null
         }
         Relationships: []
       }
