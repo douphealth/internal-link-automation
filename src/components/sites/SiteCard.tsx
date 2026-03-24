@@ -29,11 +29,7 @@ export function SiteCard({ site, postsCount, index }: SiteCardProps) {
         <Card className="group cursor-pointer transition-shadow hover:shadow-md">
           <CardContent className="flex items-center gap-4 p-5">
             <div className="rounded-lg bg-muted p-2.5">
-              {isWP ? (
-                <Wordpress className="h-5 w-5 text-primary" />
-              ) : (
-                <Globe className="h-5 w-5 text-accent" />
-              )}
+              <Globe className={`h-5 w-5 ${isWP ? 'text-primary' : 'text-accent'}`} />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
