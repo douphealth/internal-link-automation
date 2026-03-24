@@ -23,7 +23,7 @@ export function Err<E>(error: E): Result<never, E> {
 /** Unwrap a Result, throwing if it's an error */
 export function unwrap<T, E>(result: Result<T, E>): T {
   if (result.ok) return result.value;
-  throw new Error(`Unwrap called on Err: ${JSON.stringify(result.error)}`);
+  throw new Error(`Unwrap called on Err: ${JSON.stringify((result as { ok: false; error: E }).error)}`);
 }
 
 /** Unwrap a Result with a default value */
