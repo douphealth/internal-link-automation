@@ -56,7 +56,7 @@ export function BatchProgressDashboard({ batchJobId }: Props) {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             {isRunning && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-            {isComplete && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+            {isComplete && <CheckCircle2 className="h-4 w-4 text-primary" />}
             {hasError && <AlertCircle className="h-4 w-4 text-destructive" />}
             <CardTitle className="text-base">Batch Processing</CardTitle>
           </div>
