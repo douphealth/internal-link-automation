@@ -25,19 +25,16 @@ export function AddSiteDialog({ onSiteAdded }: AddSiteDialogProps) {
     if (!name || !url) return;
     setLoading(true);
 
-    const payload: Record<string, any> = {
+    const row = {
       name,
       url: url.replace(/\/$/, ''),
       source_type: sourceType,
+      wp_rest_url: sourceType === 'wordpress' ? (wpRestUrl.replace(/\/$/, '') || null) : null,
+      wp_username: sourceType === 'wordpress' ? (wpUsername || null) : null,
+      wp_app_password: sourceType === 'wordpress' ? (wpAppPassword || null) : null,
     };
 
-    if (sourceType === 'wordpress') {
-      payload.wp_rest_url = wpRestUrl.replace(/\/$/, '') || null;
-      payload.wp_username = wpUsername || null;
-      payload.wp_app_password = wpAppPassword || null;
-    }
-
-    const { error } = await supabase.from('sites').insert(payload);
+    const { error } = await supabase.from('sites').insert(row);
     setLoading(false);
 
     if (error) {
