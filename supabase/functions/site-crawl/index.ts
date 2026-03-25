@@ -23,7 +23,6 @@ serve(async (req: Request) => {
       );
     }
 
-    // Normalize URL: ensure https:// prefix
     let url = rawUrl.trim().replace(/\/$/, "");
     if (!/^https?:\/\//i.test(url)) {
       url = `https://${url}`;
@@ -34,77 +33,130 @@ serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Fetch the sitemap or homepage to discover pages
-    const pages: Array<{ url: string; title: string; content: string; wordCount: number }> = [];
+    // Create a batch job for tracking progress
+    const { data: job } = await supabase
+      .from("batch_jobs")
+      .insert({
+        status: "running",
+        phase: "discovering",
+        progress: 0,
+        total: 0,
+        started_at: new Date().toISOString(),
+        metadata: { site_id, url },
+      })
+      .select()
+      .single();
 
-    // Try sitemap first
-    const sitemapUrls = await discoverFromSitemap(url);
+    const jobId = job?.id;
 
-    const urlsToFetch = sitemapUrls.length > 0
-      ? sitemapUrls.slice(0, 50) // Limit to 50 pages
-      : await discoverFromHomepage(url);
-
-    console.log(`[site-crawl] Discovered ${urlsToFetch.length} URLs for ${url}`);
-
-    // Fetch each page
-    for (const pageUrl of urlsToFetch) {
+    // Start background crawl processing
+    const crawlPromise = (async () => {
       try {
-        const resp = await fetch(pageUrl, {
-          headers: { "User-Agent": "LinkForge/1.0 (internal-link-bot)" },
-        });
-        if (!resp.ok) continue;
+        // Discover URLs
+        const sitemapUrls = await discoverFromSitemap(url);
+        const urlsToFetch = sitemapUrls.length > 0
+          ? sitemapUrls.slice(0, 500)
+          : await discoverFromHomepage(url);
 
-        const html = await resp.text();
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        if (!doc) continue;
+        console.log(`[site-crawl] Discovered ${urlsToFetch.length} URLs for ${url}`);
 
-        // Remove script/style tags
-        doc.querySelectorAll("script, style, nav, footer, header").forEach((el) => el.remove());
+        if (jobId) {
+          await supabase.from("batch_jobs").update({
+            phase: "crawling",
+            total: urlsToFetch.length,
+            progress: 0,
+          }).eq("id", jobId);
+        }
 
-        const title = doc.querySelector("title")?.textContent?.trim() || pageUrl;
-        const bodyText = doc.querySelector("body")?.textContent || "";
-        const cleanText = bodyText.replace(/\s+/g, " ").trim();
-        const wordCount = cleanText.split(/\s+/).filter(Boolean).length;
+        // Fetch pages concurrently in batches of 5
+        const pages: Array<{ url: string; title: string; content: string; wordCount: number }> = [];
+        const CONCURRENCY = 5;
 
-        // Get main content HTML
-        const mainEl = doc.querySelector("main, article, [role='main'], .content, #content");
-        const contentHtml = mainEl?.innerHTML || doc.querySelector("body")?.innerHTML || "";
+        for (let i = 0; i < urlsToFetch.length; i += CONCURRENCY) {
+          const batch = urlsToFetch.slice(i, i + CONCURRENCY);
+          const results = await Promise.allSettled(
+            batch.map(pageUrl => fetchPage(pageUrl))
+          );
 
-        pages.push({ url: pageUrl, title, content: contentHtml.slice(0, 50000), wordCount });
-      } catch (e) {
-        console.warn(`[site-crawl] Failed to fetch ${pageUrl}:`, e);
+          for (const result of results) {
+            if (result.status === "fulfilled" && result.value) {
+              pages.push(result.value);
+            }
+          }
+
+          // Update progress
+          if (jobId && i % 10 === 0) {
+            await supabase.from("batch_jobs").update({
+              progress: Math.min(i + CONCURRENCY, urlsToFetch.length),
+            }).eq("id", jobId);
+          }
+        }
+
+        console.log(`[site-crawl] Successfully fetched ${pages.length}/${urlsToFetch.length} pages`);
+
+        // Upsert pages into posts table in batches
+        const UPSERT_BATCH = 20;
+        for (let i = 0; i < pages.length; i += UPSERT_BATCH) {
+          const batch = pages.slice(i, i + UPSERT_BATCH);
+          const rows = await Promise.all(batch.map(async (page) => {
+            const encoder = new TextEncoder();
+            const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(page.content));
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const contentHash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+            const slug = new URL(page.url).pathname.replace(/\/$/, "") || "/";
+
+            return {
+              site_id,
+              title: page.title.slice(0, 500),
+              slug,
+              url: page.url,
+              content: page.content,
+              content_hash: contentHash,
+              word_count: page.wordCount,
+              source_type: "generic",
+              status: "publish",
+              fetched_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+          }));
+
+          await supabase.from("posts").upsert(rows, { onConflict: "url" });
+        }
+
+        // Mark job complete
+        if (jobId) {
+          await supabase.from("batch_jobs").update({
+            status: "complete",
+            phase: "done",
+            progress: pages.length,
+            total: urlsToFetch.length,
+            completed_at: new Date().toISOString(),
+            metadata: { site_id, url, pagesFound: urlsToFetch.length, pagesCrawled: pages.length },
+          }).eq("id", jobId);
+        }
+
+        console.log(`[site-crawl] Completed: ${pages.length} pages stored`);
+      } catch (error) {
+        console.error("[site-crawl] Background crawl error:", error);
+        if (jobId) {
+          await supabase.from("batch_jobs").update({
+            status: "error",
+            error: String(error),
+          }).eq("id", jobId);
+        }
       }
-    }
+    })();
 
-    // Upsert pages into posts table
-    const crypto = globalThis.crypto;
-    for (const page of pages) {
-      const encoder = new TextEncoder();
-      const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(page.content));
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const contentHash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-      const slug = new URL(page.url).pathname.replace(/\/$/, "") || "/";
-
-      await supabase.from("posts").upsert(
-        {
-          site_id,
-          title: page.title.slice(0, 500),
-          slug,
-          url: page.url,
-          content: page.content,
-          content_hash: contentHash,
-          word_count: page.wordCount,
-          source_type: "generic",
-          status: "publish",
-          fetched_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "url" }
-      );
+    // Use EdgeRuntime.waitUntil if available for true background processing
+    if (typeof (globalThis as any).EdgeRuntime !== "undefined" && (globalThis as any).EdgeRuntime.waitUntil) {
+      (globalThis as any).EdgeRuntime.waitUntil(crawlPromise);
+    } else {
+      // Fallback: await the crawl (will work but may timeout for very large sites)
+      await crawlPromise;
     }
 
     return new Response(
-      JSON.stringify({ success: true, pages: pages.map((p) => ({ url: p.url, title: p.title, wordCount: p.wordCount })) }),
+      JSON.stringify({ success: true, jobId, message: "Crawl started. Check batch_jobs for progress." }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
@@ -115,6 +167,40 @@ serve(async (req: Request) => {
     );
   }
 });
+
+async function fetchPage(pageUrl: string): Promise<{ url: string; title: string; content: string; wordCount: number } | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+
+    const resp = await fetch(pageUrl, {
+      headers: { "User-Agent": "LinkForge/1.0 (internal-link-bot)" },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!resp.ok) return null;
+
+    const html = await resp.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    if (!doc) return null;
+
+    doc.querySelectorAll("script, style, nav, footer, header, noscript, svg, iframe").forEach((el) => el.remove());
+
+    const title = doc.querySelector("title")?.textContent?.trim() || pageUrl;
+    const bodyText = doc.querySelector("body")?.textContent || "";
+    const cleanText = bodyText.replace(/\s+/g, " ").trim();
+    const wordCount = cleanText.split(/\s+/).filter(Boolean).length;
+
+    const mainEl = doc.querySelector("main, article, [role='main'], .content, #content");
+    const contentHtml = mainEl?.innerHTML || doc.querySelector("body")?.innerHTML || "";
+
+    return { url: pageUrl, title, content: contentHtml.slice(0, 50000), wordCount };
+  } catch (e) {
+    console.warn(`[site-crawl] Failed to fetch ${pageUrl}:`, e);
+    return null;
+  }
+}
 
 async function discoverFromSitemap(baseUrl: string): Promise<string[]> {
   const urls: string[] = [];
@@ -128,13 +214,10 @@ async function discoverFromSitemap(baseUrl: string): Promise<string[]> {
       if (!resp.ok) continue;
 
       const xml = await resp.text();
-      // Extract URLs from sitemap
       const locMatches = xml.matchAll(/<loc>\s*(.*?)\s*<\/loc>/gi);
       for (const match of locMatches) {
         const loc = match[1];
-        // Skip image/video sitemaps and non-page resources
         if (loc.match(/\.(jpg|png|gif|pdf|zip|mp4|mp3)$/i)) continue;
-        // If it's a sub-sitemap, try to fetch it too
         if (loc.includes("sitemap") && loc.endsWith(".xml")) {
           try {
             const subResp = await fetch(loc);
@@ -184,7 +267,7 @@ async function discoverFromHomepage(baseUrl: string): Promise<string[]> {
       } catch {}
     });
 
-    return [...urls].slice(0, 50);
+    return [...urls].slice(0, 500);
   } catch {
     return [baseUrl];
   }
