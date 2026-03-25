@@ -141,15 +141,16 @@ export default function SiteDetail() {
 
     try {
       const result = await executeBatchSaga(siteId);
-      if (result.ok) {
+      if (result.ok === true) {
         const ctx = result.value;
         toast.success(`Analysis complete!`, {
           description: `${ctx.metrics.embeddingsComputed} embeddings, ${ctx.metrics.suggestionsGenerated} suggestions generated.`,
         });
         queryClient.invalidateQueries({ queryKey: ['suggestions'] });
-      } else {
+      } else if (result.ok === false) {
+        const err = result.error as any;
         toast.error('Analysis failed', {
-          description: (result.error as any)?.step ? `Failed at step: ${(result.error as any).step}` : 'Unknown error',
+          description: err?.step ? `Failed at step: ${err.step}` : 'Unknown error',
         });
       }
     } catch (err: any) {
