@@ -1,5 +1,5 @@
 import { useParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,12 +7,14 @@ import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { PostListSkeleton } from '@/components/shared/Skeletons';
-import { ArrowLeft, ExternalLink, RefreshCw, FileText, Search, Loader2, Hash, Type } from 'lucide-react';
+import { ArrowLeft, ExternalLink, RefreshCw, FileText, Search, Loader2, Hash, Type, Sparkles, Zap } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
+import { executeBatchSaga } from '@/contexts/link-automation/services/BatchOrchestrator';
 
 interface Post {
   id: string;
@@ -43,7 +45,8 @@ function useSitePosts(siteId: string | undefined) {
         .from('posts')
         .select('id, title, slug, url, word_count, status, fetched_at')
         .eq('site_id', siteId!)
-        .order('fetched_at', { ascending: false });
+        .order('fetched_at', { ascending: false })
+        .limit(1000);
       return (data ?? []) as Post[];
     },
     enabled: !!siteId,
@@ -53,29 +56,108 @@ function useSitePosts(siteId: string | undefined) {
 
 export default function SiteDetail() {
   const { siteId } = useParams<{ siteId: string }>();
+  const queryClient = useQueryClient();
   const { data: site, isLoading: siteLoading } = useSite(siteId);
   const { data: posts = [], isLoading: postsLoading, refetch } = useSitePosts(siteId);
   const [crawling, setCrawling] = useState(false);
+  const [crawlProgress, setCrawlProgress] = useState<{ progress: number; total: number; phase: string } | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
   const [search, setSearch] = useState('');
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Cleanup poll on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
   const handleCrawl = useCallback(async () => {
     if (!site) return;
     setCrawling(true);
+    setCrawlProgress({ progress: 0, total: 0, phase: 'discovering' });
     try {
       const fnName = site.source_type === 'wordpress' ? 'wp-proxy' : 'site-crawl';
       const { data, error } = await supabase.functions.invoke(fnName, {
         body: { site_id: site.id, url: site.url },
       });
       if (error) throw error;
-      const count = data?.posts?.length ?? data?.pages?.length ?? 0;
-      toast.success(`Crawled ${count} pages`, { description: 'Pages have been indexed for analysis.' });
-      refetch();
+
+      const jobId = data?.jobId;
+      if (jobId) {
+        // Poll for progress
+        pollRef.current = setInterval(async () => {
+          const { data: job } = await supabase
+            .from('batch_jobs')
+            .select('status, phase, progress, total, error')
+            .eq('id', jobId)
+            .single();
+
+          if (!job) return;
+
+          setCrawlProgress({
+            progress: job.progress ?? 0,
+            total: job.total ?? 0,
+            phase: job.phase ?? 'crawling',
+          });
+
+          if (job.status === 'complete' || job.status === 'error') {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            setCrawling(false);
+            setCrawlProgress(null);
+
+            if (job.status === 'complete') {
+              toast.success(`Crawled ${job.progress} pages`, {
+                description: 'Pages have been indexed. Run analysis to generate suggestions.',
+              });
+            } else {
+              toast.error('Crawl failed', { description: job.error || 'Unknown error' });
+            }
+            refetch();
+          }
+        }, 2000);
+      } else {
+        // Legacy: no jobId returned
+        const count = data?.posts?.length ?? data?.pages?.length ?? 0;
+        toast.success(`Crawled ${count} pages`);
+        setCrawling(false);
+        setCrawlProgress(null);
+        refetch();
+      }
     } catch (err: any) {
       toast.error('Crawl failed', { description: err.message || 'Unknown error' });
-    } finally {
       setCrawling(false);
+      setCrawlProgress(null);
     }
   }, [site, refetch]);
+
+  const handleAnalyze = useCallback(async () => {
+    if (!siteId) return;
+    setAnalyzing(true);
+    toast.info('Running analysis pipeline…', {
+      description: 'Computing embeddings and generating link suggestions. This may take a minute.',
+    });
+
+    try {
+      const result = await executeBatchSaga(siteId);
+      if (result.ok) {
+        const ctx = result.value;
+        toast.success(`Analysis complete!`, {
+          description: `${ctx.metrics.embeddingsComputed} embeddings, ${ctx.metrics.suggestionsGenerated} suggestions generated.`,
+        });
+        queryClient.invalidateQueries({ queryKey: ['suggestions'] });
+      } else {
+        toast.error('Analysis failed', {
+          description: (result.error as any)?.step ? `Failed at step: ${(result.error as any).step}` : 'Unknown error',
+        });
+      }
+    } catch (err: any) {
+      toast.error('Analysis failed', { description: err.message || 'Unknown error' });
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [siteId, queryClient]);
 
   const filtered = search
     ? posts.filter(p => p.title.toLowerCase().includes(search.toLowerCase()) || p.url.toLowerCase().includes(search.toLowerCase()))
@@ -125,12 +207,38 @@ export default function SiteDetail() {
           </a>
         }
         actions={
-          <Button onClick={handleCrawl} disabled={crawling} size="sm" className="rounded-xl">
-            {crawling ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
-            {crawling ? 'Crawling…' : 'Crawl Pages'}
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={handleCrawl} disabled={crawling || analyzing} size="sm" className="rounded-xl" variant="outline">
+              {crawling ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
+              {crawling ? 'Crawling…' : 'Crawl Pages'}
+            </Button>
+            {posts.length > 0 && (
+              <Button onClick={handleAnalyze} disabled={analyzing || crawling} size="sm" className="rounded-xl">
+                {analyzing ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Sparkles className="mr-1.5 h-4 w-4" />}
+                {analyzing ? 'Analyzing…' : 'Generate Suggestions'}
+              </Button>
+            )}
+          </div>
         }
       />
+
+      {/* Crawl progress bar */}
+      {crawlProgress && (
+        <Card>
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+              <span className="capitalize font-medium">{crawlProgress.phase}…</span>
+              <span className="font-mono tabular-nums">
+                {crawlProgress.progress}/{crawlProgress.total || '?'}
+              </span>
+            </div>
+            <Progress
+              value={crawlProgress.total > 0 ? (crawlProgress.progress / crawlProgress.total) * 100 : 0}
+              className="h-2"
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stats strip */}
       <div className="grid grid-cols-3 gap-3">
