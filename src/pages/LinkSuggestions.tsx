@@ -8,9 +8,10 @@ import { PageHeader } from '@/components/shared/PageHeader';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { SuggestionCardSkeleton } from '@/components/shared/Skeletons';
 import { StaggerList, StaggerItem } from '@/components/shared/StaggerList';
-import { Check, X, Link2, ExternalLink, ArrowRight } from 'lucide-react';
+import { Check, X, Link2, ArrowRight, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { motion } from 'framer-motion';
 
 interface Suggestion {
   id: string;
@@ -75,11 +76,15 @@ export default function LinkSuggestions() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       <PageHeader
         title="Link Suggestions"
         description="Review and manage AI-generated internal link suggestions."
-        badge={<Badge variant="secondary" className="text-xs font-mono">{suggestions.length}</Badge>}
+        badge={
+          suggestions.length > 0 ? (
+            <Badge variant="secondary" className="text-[10px] font-mono font-bold rounded-md">{suggestions.length}</Badge>
+          ) : undefined
+        }
       />
 
       {/* Filter tabs */}
@@ -91,8 +96,8 @@ export default function LinkSuggestions() {
             size="sm"
             onClick={() => setFilter(f)}
             className={cn(
-              'h-8 text-xs capitalize',
-              filter === f ? '' : 'border-border hover:bg-muted'
+              'h-8 text-xs capitalize rounded-lg',
+              filter === f ? 'shadow-soft' : 'border-border/60 hover:bg-muted/60'
             )}
           >
             {f}
@@ -118,22 +123,25 @@ export default function LinkSuggestions() {
         <StaggerList>
           {suggestions.map((s) => (
             <StaggerItem key={s.id}>
-              <Card className="transition-all duration-150 hover:shadow-soft">
+              <Card className="transition-all duration-200 hover:shadow-soft overflow-hidden group">
                 <CardContent className="p-4 sm:p-5">
                   <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                     <div className="flex-1 min-w-0 space-y-2.5">
                       {/* Status & score */}
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Badge variant="outline" className={cn('text-[10px] font-semibold capitalize', statusStyles[s.status])}>
+                        <Badge variant="outline" className={cn('text-[10px] font-bold capitalize rounded-md', statusStyles[s.status])}>
                           {s.status}
                         </Badge>
-                        <span className="text-[11px] text-muted-foreground font-mono tabular-nums">
-                          {(s.similarity_score * 100).toFixed(0)}% match
-                        </span>
+                        <div className="flex items-center gap-1">
+                          <TrendingUp className="h-3 w-3 text-muted-foreground" />
+                          <span className="text-[11px] text-muted-foreground font-mono tabular-nums font-medium">
+                            {(s.similarity_score * 100).toFixed(0)}% match
+                          </span>
+                        </div>
                       </div>
 
                       {/* Anchor text */}
-                      <p className="font-semibold text-sm">
+                      <p className="font-bold text-sm">
                         <span className="text-primary">"</span>
                         {s.anchor_text}
                         <span className="text-primary">"</span>
@@ -142,19 +150,19 @@ export default function LinkSuggestions() {
                       {/* From → To */}
                       <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1 min-w-0">
-                          <span className="font-medium text-foreground shrink-0">From:</span>
+                          <span className="font-semibold text-foreground/70 shrink-0 text-[11px]">From:</span>
                           <span className="truncate">{s.source_post?.title ?? 'Unknown'}</span>
                         </span>
-                        <ArrowRight className="h-3 w-3 shrink-0 hidden sm:block text-muted-foreground/40" />
+                        <ArrowRight className="h-3 w-3 shrink-0 hidden sm:block text-muted-foreground/30" />
                         <span className="flex items-center gap-1 min-w-0">
-                          <span className="font-medium text-foreground shrink-0">To:</span>
+                          <span className="font-semibold text-foreground/70 shrink-0 text-[11px]">To:</span>
                           <span className="truncate">{s.target_post?.title ?? 'Unknown'}</span>
                         </span>
                       </div>
 
                       {/* Context */}
                       {s.context_snippet && (
-                        <p className="text-[11px] text-muted-foreground italic bg-muted/60 rounded-md px-3 py-2 leading-relaxed">
+                        <p className="text-[11px] text-muted-foreground italic bg-muted/40 rounded-lg px-3 py-2.5 leading-relaxed border border-border/30">
                           …{s.context_snippet}…
                         </p>
                       )}
@@ -166,7 +174,7 @@ export default function LinkSuggestions() {
                         <Button
                           size="sm"
                           variant="outline"
-                          className="h-8 text-xs border-success/30 text-success hover:bg-success/8 hover:text-success"
+                          className="h-8 text-xs rounded-lg border-success/30 text-success hover:bg-success/8 hover:text-success hover:border-success/50"
                           onClick={() => updateStatus(s.id, 'accepted')}
                         >
                           <Check className="h-3.5 w-3.5 mr-1" /> Accept
@@ -174,7 +182,7 @@ export default function LinkSuggestions() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="h-8 text-xs text-muted-foreground hover:text-destructive"
+                          className="h-8 text-xs rounded-lg text-muted-foreground hover:text-destructive"
                           onClick={() => updateStatus(s.id, 'rejected')}
                         >
                           <X className="h-3.5 w-3.5 mr-1" /> Reject
