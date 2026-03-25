@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { PostListSkeleton } from '@/components/shared/Skeletons';
-import { ArrowLeft, ExternalLink, RefreshCw, FileText, Search, Loader2 } from 'lucide-react';
+import { ArrowLeft, ExternalLink, RefreshCw, FileText, Search, Loader2, Hash, Type } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
@@ -95,7 +95,7 @@ export default function SiteDetail() {
         icon={FileText}
         title="Site not found"
         description="This site doesn't exist or you don't have access."
-        action={<Link to="/sites"><Button variant="outline">Back to Sites</Button></Link>}
+        action={<Link to="/sites"><Button variant="outline" className="rounded-xl">Back to Sites</Button></Link>}
       />
     );
   }
@@ -104,16 +104,16 @@ export default function SiteDetail() {
   const totalWords = posts.reduce((sum, p) => sum + (p.word_count ?? 0), 0);
 
   return (
-    <div className="space-y-6">
-      <Link to="/sites" className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
-        <ArrowLeft className="h-3.5 w-3.5" /> Back to sites
+    <div className="space-y-5 sm:space-y-6">
+      <Link to="/sites" className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors group">
+        <ArrowLeft className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5" /> Back to sites
       </Link>
 
       <PageHeader
         title={site.name}
         badge={
           <Badge variant="secondary" className={cn(
-            'text-[10px] font-semibold uppercase tracking-wider',
+            'text-[9px] font-bold uppercase tracking-[0.12em] rounded-md',
             isWP ? 'bg-primary/8 text-primary' : 'bg-accent/8 text-accent'
           )}>
             {isWP ? 'WordPress' : 'Website'}
@@ -125,12 +125,8 @@ export default function SiteDetail() {
           </a>
         }
         actions={
-          <Button onClick={handleCrawl} disabled={crawling} size="sm">
-            {crawling ? (
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-1.5 h-4 w-4" />
-            )}
+          <Button onClick={handleCrawl} disabled={crawling} size="sm" className="rounded-xl">
+            {crawling ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
             {crawling ? 'Crawling…' : 'Crawl Pages'}
           </Button>
         }
@@ -139,64 +135,71 @@ export default function SiteDetail() {
       {/* Stats strip */}
       <div className="grid grid-cols-3 gap-3">
         {[
-          { label: 'Pages', value: posts.length },
-          { label: 'Total Words', value: totalWords.toLocaleString() },
-          { label: 'Avg Words', value: posts.length > 0 ? Math.round(totalWords / posts.length).toLocaleString() : '0' },
+          { label: 'Pages', value: posts.length, icon: FileText, color: 'text-primary bg-primary/6 border-primary/10' },
+          { label: 'Total Words', value: totalWords.toLocaleString(), icon: Type, color: 'text-accent bg-accent/6 border-accent/10' },
+          { label: 'Avg Words', value: posts.length > 0 ? Math.round(totalWords / posts.length).toLocaleString() : '0', icon: Hash, color: 'text-success bg-success/6 border-success/10' },
         ].map((stat) => (
           <Card key={stat.label}>
             <CardContent className="py-3 px-4 text-center">
-              <p className="text-lg font-bold tabular-nums">{stat.value}</p>
-              <p className="text-[11px] font-medium text-muted-foreground">{stat.label}</p>
+              <div className={cn('inline-flex rounded-lg p-1.5 border mb-2', stat.color)}>
+                <stat.icon className="h-3.5 w-3.5" />
+              </div>
+              <p className="text-lg sm:text-xl font-extrabold tabular-nums leading-none">{stat.value}</p>
+              <p className="text-[10px] font-medium text-muted-foreground mt-1">{stat.label}</p>
             </CardContent>
           </Card>
         ))}
       </div>
 
-      <Card>
-        <CardHeader className="pb-3">
+      <Card className="overflow-hidden">
+        <CardHeader className="pb-3 border-b border-border/50 bg-muted/20">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
-              <CardTitle className="text-base font-semibold flex items-center gap-2">
-                <FileText className="h-4 w-4 text-primary" />
+              <CardTitle className="text-sm font-bold flex items-center gap-2">
+                <div className="h-6 w-6 rounded-lg bg-primary/8 flex items-center justify-center">
+                  <FileText className="h-3.5 w-3.5 text-primary" />
+                </div>
                 Pages
-                <Badge variant="secondary" className="text-[10px] font-mono ml-1">{posts.length}</Badge>
+                <Badge variant="secondary" className="text-[10px] font-mono font-bold ml-1 rounded-md">{posts.length}</Badge>
               </CardTitle>
-              <CardDescription className="text-xs mt-0.5">Indexed content from this site</CardDescription>
+              <CardDescription className="text-[11px] mt-0.5">Indexed content from this site</CardDescription>
             </div>
             {posts.length > 0 && (
-              <div className="relative w-full sm:w-56">
-                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <div className="relative w-full sm:w-52">
+                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/50" />
                 <Input
                   placeholder="Filter pages…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  className="pl-8 h-8 text-xs"
+                  className="pl-8 h-8 text-xs rounded-lg"
                 />
               </div>
             )}
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           {postsLoading ? (
-            <PostListSkeleton />
+            <div className="p-4"><PostListSkeleton /></div>
           ) : !filtered.length ? (
-            <EmptyState
-              icon={FileText}
-              title={search ? 'No matching pages' : 'No pages indexed yet'}
-              description={search ? `No pages matching "${search}".` : 'Click "Crawl Pages" to fetch and index content from this site.'}
-            />
+            <div className="p-4">
+              <EmptyState
+                icon={FileText}
+                title={search ? 'No matching pages' : 'No pages indexed yet'}
+                description={search ? `No pages matching "${search}".` : 'Click "Crawl Pages" to fetch and index content from this site.'}
+              />
+            </div>
           ) : (
-            <div className="divide-y">
+            <div className="divide-y divide-border/40">
               {filtered.map((post, i) => (
                 <motion.div
                   key={post.id}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ delay: Math.min(i * 0.02, 0.3) }}
-                  className="flex items-center justify-between py-3 gap-4 group"
+                  className="flex items-center justify-between px-4 sm:px-5 py-3 gap-4 group hover:bg-muted/20 transition-colors"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                    <p className="font-semibold text-sm truncate group-hover:text-primary transition-colors">
                       {post.title}
                     </p>
                     <p className="text-[11px] text-muted-foreground truncate mt-0.5 font-mono">
@@ -209,7 +212,7 @@ export default function SiteDetail() {
                         {post.word_count.toLocaleString()} words
                       </span>
                     )}
-                    <Badge variant="outline" className="text-[10px] font-medium capitalize">
+                    <Badge variant="outline" className="text-[10px] font-semibold capitalize rounded-md">
                       {post.status ?? 'draft'}
                     </Badge>
                   </div>

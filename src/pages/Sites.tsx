@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { AddSiteDialog } from '@/components/sites/AddSiteDialog';
@@ -10,7 +10,6 @@ import { StaggerList, StaggerItem } from '@/components/shared/StaggerList';
 import { Globe, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { useState } from 'react';
 
 interface Site {
   id: string;
@@ -63,22 +62,26 @@ export default function Sites() {
     : sites;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       <PageHeader
         title="Sites"
-        description="Manage your websites for internal link analysis."
-        badge={<Badge variant="secondary" className="text-xs font-mono">{sites.length}</Badge>}
+        description="Manage your websites for AI-powered internal link analysis."
+        badge={
+          sites.length > 0 ? (
+            <Badge variant="secondary" className="text-[10px] font-mono font-bold rounded-md">{sites.length}</Badge>
+          ) : undefined
+        }
         actions={<AddSiteDialog onSiteAdded={() => refetch()} />}
       />
 
       {sites.length > 0 && (
         <div className="relative max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
           <Input
             placeholder="Search sites…"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="pl-9 h-9 text-sm"
+            className="pl-9 h-10 text-sm rounded-xl bg-card"
           />
         </div>
       )}
@@ -91,7 +94,7 @@ export default function Sites() {
         <EmptyState
           icon={Globe}
           title="No sites yet"
-          description="Add your first site to start discovering internal linking opportunities across your content."
+          description="Add your first site to start discovering internal linking opportunities with AI."
           action={<AddSiteDialog onSiteAdded={() => refetch()} />}
         />
       ) : filtered.length === 0 ? (

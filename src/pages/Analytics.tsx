@@ -34,32 +34,32 @@ export default function Analytics() {
   const { data, isLoading } = useAnalyticsData();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       <PageHeader
         title="Analytics"
         description="Track internal linking performance across your sites."
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {[
-          { label: 'Total Events', value: data?.events.length ?? 0, icon: Activity, color: 'text-primary bg-primary/8' },
-          { label: 'Links Applied', value: data?.applied.length ?? 0, icon: Link2, color: 'text-success bg-success/8' },
-          { label: 'Active Days', value: data?.byDay.length ?? 0, icon: TrendingUp, color: 'text-accent bg-accent/8' },
+          { label: 'Total Events', value: data?.events.length ?? 0, icon: Activity, color: 'text-primary bg-primary/6 border-primary/10' },
+          { label: 'Links Applied', value: data?.applied.length ?? 0, icon: Link2, color: 'text-success bg-success/6 border-success/10' },
+          { label: 'Active Days', value: data?.byDay.length ?? 0, icon: TrendingUp, color: 'text-accent bg-accent/6 border-accent/10' },
         ].map((stat, i) => (
           <motion.div
             key={stat.label}
-            initial={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.06 }}
           >
-            <Card>
-              <CardContent className="flex items-center gap-4 p-5">
-                <div className={cn('rounded-lg p-2', stat.color)}>
+            <Card className="group transition-all duration-300 hover:shadow-card-hover hover:-translate-y-0.5">
+              <CardContent className="flex items-center gap-4 p-4 sm:p-5">
+                <div className={cn('rounded-xl p-2.5 border transition-transform duration-300 group-hover:scale-105', stat.color)}>
                   <stat.icon className="h-4 w-4" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold tabular-nums">{stat.value}</p>
-                  <p className="text-xs text-muted-foreground font-medium">{stat.label}</p>
+                  <p className="text-2xl font-extrabold tabular-nums leading-none">{stat.value}</p>
+                  <p className="text-[11px] text-muted-foreground font-medium mt-1">{stat.label}</p>
                 </div>
               </CardContent>
             </Card>
@@ -67,36 +67,46 @@ export default function Analytics() {
         ))}
       </div>
 
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-primary" />
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-3 border-b border-border/50 bg-muted/20">
+            <CardTitle className="text-sm font-bold flex items-center gap-2">
+              <div className="h-6 w-6 rounded-lg bg-primary/8 flex items-center justify-center">
+                <BarChart3 className="h-3.5 w-3.5 text-primary" />
+              </div>
               Recent Activity
             </CardTitle>
-            <CardDescription className="text-xs">Latest events across all sites</CardDescription>
+            <CardDescription className="text-[11px]">Latest events across all sites</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-0">
             {!data?.events.length ? (
-              <div className="py-12 text-center">
-                <BarChart3 className="h-10 w-10 mx-auto text-muted-foreground/40 mb-3" />
-                <p className="text-sm font-medium text-muted-foreground">No activity yet</p>
-                <p className="text-xs text-muted-foreground mt-1">Apply some links to see analytics data.</p>
+              <div className="py-16 text-center px-6">
+                <div className="inline-flex rounded-2xl bg-muted/80 p-4 mb-4 ring-1 ring-border/40">
+                  <BarChart3 className="h-8 w-8 text-muted-foreground/40" />
+                </div>
+                <p className="text-sm font-bold text-muted-foreground">No activity yet</p>
+                <p className="text-xs text-muted-foreground/70 mt-1">Apply some links to see analytics data.</p>
               </div>
             ) : (
-              <div className="divide-y">
+              <div className="divide-y divide-border/40">
                 {data.events.slice(0, 10).map((event, i) => (
-                  <div key={i} className="flex items-center justify-between py-2.5">
-                    <div className="flex items-center gap-2.5">
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: i * 0.03 }}
+                    className="flex items-center justify-between px-4 sm:px-5 py-3 hover:bg-muted/20 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
                       <div className="h-2 w-2 rounded-full bg-success animate-pulse-soft" />
-                      <span className="text-sm font-medium capitalize">
+                      <span className="text-sm font-semibold capitalize">
                         {event.event_type.replace(/_/g, ' ')}
                       </span>
                     </div>
-                    <span className="text-[11px] text-muted-foreground font-mono">
+                    <span className="text-[11px] text-muted-foreground font-mono tabular-nums">
                       {new Date(event.created_at!).toLocaleString()}
                     </span>
-                  </div>
+                  </motion.div>
                 ))}
               </div>
             )}
