@@ -20,37 +20,38 @@ export function SiteCard({ site, postsCount }: SiteCardProps) {
 
   return (
     <Link to={`/sites/${site.id}`}>
-      <Card className="group cursor-pointer transition-all duration-200 hover:shadow-card-hover hover:border-primary/20">
-        <CardContent className="flex items-center gap-4 p-4 sm:p-5">
+      <Card className="group cursor-pointer transition-all duration-300 hover:shadow-card-hover hover:-translate-y-0.5 hover:border-primary/15 overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-r from-primary/3 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+        <CardContent className="relative flex items-center gap-4 p-4 sm:p-5">
           <div className={cn(
-            'rounded-lg p-2.5 transition-colors',
-            isWP ? 'bg-primary/8 text-primary' : 'bg-accent/8 text-accent'
+            'rounded-xl p-2.5 border transition-all duration-300 group-hover:scale-105',
+            isWP ? 'bg-primary/6 text-primary border-primary/10' : 'bg-accent/6 text-accent border-accent/10'
           )}>
             <Globe className="h-5 w-5" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <h3 className="font-semibold text-sm truncate">{site.name}</h3>
+              <h3 className="font-bold text-sm truncate group-hover:text-primary transition-colors">{site.name}</h3>
               <Badge
                 variant="secondary"
                 className={cn(
-                  'text-[10px] font-semibold uppercase tracking-wider shrink-0 px-1.5 py-0',
-                  isWP ? 'bg-primary/8 text-primary border-primary/20' : 'bg-accent/8 text-accent border-accent/20'
+                  'text-[9px] font-bold uppercase tracking-[0.1em] shrink-0 px-1.5 py-0 rounded-md',
+                  isWP ? 'bg-primary/8 text-primary' : 'bg-accent/8 text-accent'
                 )}
               >
                 {isWP ? 'WP' : 'Web'}
               </Badge>
             </div>
-            <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
-              <ExternalLink className="h-3 w-3 shrink-0" />
+            <div className="flex items-center gap-1 text-[11px] text-muted-foreground mt-1">
+              <ExternalLink className="h-3 w-3 shrink-0 opacity-50" />
               <span className="truncate">{site.url.replace(/^https?:\/\//, '')}</span>
             </div>
           </div>
           <div className="text-right shrink-0 mr-1">
-            <p className="text-lg font-bold tabular-nums">{postsCount}</p>
-            <p className="text-[11px] text-muted-foreground font-medium">pages</p>
+            <p className="text-xl font-extrabold tabular-nums leading-none">{postsCount}</p>
+            <p className="text-[10px] text-muted-foreground font-medium mt-0.5">pages</p>
           </div>
-          <ChevronRight className="h-4 w-4 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-all duration-200 group-hover:translate-x-0.5 shrink-0" />
+          <ChevronRight className="h-4 w-4 text-muted-foreground/30 opacity-0 group-hover:opacity-100 transition-all duration-200 group-hover:translate-x-0.5 shrink-0" />
         </CardContent>
       </Card>
     </Link>

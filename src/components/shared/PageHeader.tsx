@@ -11,18 +11,18 @@ interface PageHeaderProps {
 export function PageHeader({ title, description, actions, badge }: PageHeaderProps) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: -4 }}
+      initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-      className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+      transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+      className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
     >
       <div className="min-w-0">
-        <div className="flex items-center gap-2.5">
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{title}</h1>
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <h1 className="text-xl sm:text-2xl lg:text-3xl font-extrabold tracking-tight">{title}</h1>
           {badge}
         </div>
         {description && (
-          <p className="mt-1 text-sm text-muted-foreground leading-relaxed">{description}</p>
+          <div className="mt-1 text-[13px] sm:text-sm text-muted-foreground leading-relaxed">{description}</div>
         )}
       </div>
       {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
