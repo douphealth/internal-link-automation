@@ -14,13 +14,19 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { site_id, url } = await req.json();
+    const { site_id, url: rawUrl } = await req.json();
 
-    if (!site_id || !url) {
+    if (!site_id || !rawUrl) {
       return new Response(
         JSON.stringify({ error: "site_id and url are required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // Normalize URL: ensure https:// prefix
+    let url = rawUrl.trim().replace(/\/$/, "");
+    if (!/^https?:\/\//i.test(url)) {
+      url = `https://${url}`;
     }
 
     const supabase = createClient(
