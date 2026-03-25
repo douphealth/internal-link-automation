@@ -25,9 +25,15 @@ export function AddSiteDialog({ onSiteAdded }: AddSiteDialogProps) {
     if (!name || !url) return;
     setLoading(true);
 
+    // Normalize URL: ensure https:// prefix
+    let normalizedUrl = url.trim().replace(/\/$/, '');
+    if (!/^https?:\/\//i.test(normalizedUrl)) {
+      normalizedUrl = `https://${normalizedUrl}`;
+    }
+
     const row = {
       name,
-      url: url.replace(/\/$/, ''),
+      url: normalizedUrl,
       source_type: sourceType,
       wp_rest_url: sourceType === 'wordpress' ? (wpRestUrl.replace(/\/$/, '') || null) : null,
       wp_username: sourceType === 'wordpress' ? (wpUsername || null) : null,
