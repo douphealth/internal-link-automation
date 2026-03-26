@@ -258,7 +258,6 @@ async function stepComputeEmbeddings(ctx: BatchContext): Promise<Result<void, Sa
       jobId: ctx.jobId, 
       progress, 
       total: ctx.posts.length,
-      phase: 'embedding',
     });
   }
 
