@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { PostListSkeleton } from '@/components/shared/Skeletons';
-import { ArrowLeft, ExternalLink, RefreshCw, FileText, Search, Loader2, Hash, Type, Sparkles, Zap } from 'lucide-react';
+import { ArrowLeft, ExternalLink, RefreshCw, FileText, Search, Loader2, Hash, Type, Sparkles, Link2, CheckCircle2, Circle, Play } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
@@ -54,27 +54,61 @@ function useSitePosts(siteId: string | undefined) {
   });
 }
 
+function useSiteSuggestionCount(siteId: string | undefined, postIds: string[]) {
+  return useQuery({
+    queryKey: ['site-suggestion-count', siteId, postIds.length],
+    queryFn: async () => {
+      if (postIds.length === 0) return 0;
+      const { count } = await supabase
+        .from('link_suggestions')
+        .select('id', { count: 'exact', head: true })
+        .in('source_post_id', postIds);
+      return count ?? 0;
+    },
+    enabled: !!siteId && postIds.length > 0,
+    staleTime: 15_000,
+  });
+}
+
+function useEmbeddingCount(siteId: string | undefined, postIds: string[]) {
+  return useQuery({
+    queryKey: ['site-embedding-count', siteId, postIds.length],
+    queryFn: async () => {
+      if (postIds.length === 0) return 0;
+      const { count } = await supabase
+        .from('embeddings')
+        .select('id', { count: 'exact', head: true })
+        .in('post_id', postIds);
+      return count ?? 0;
+    },
+    enabled: !!siteId && postIds.length > 0,
+    staleTime: 15_000,
+  });
+}
+
+type PipelinePhase = 'idle' | 'crawling' | 'embedding' | 'suggesting' | 'done' | 'error';
+
 export default function SiteDetail() {
   const { siteId } = useParams<{ siteId: string }>();
   const queryClient = useQueryClient();
   const { data: site, isLoading: siteLoading } = useSite(siteId);
   const { data: posts = [], isLoading: postsLoading, refetch } = useSitePosts(siteId);
-  const [crawling, setCrawling] = useState(false);
+  const { data: suggestionCount = 0, refetch: refetchSuggestions } = useSiteSuggestionCount(siteId, posts.map(p => p.id));
+  const { data: embeddingCount = 0, refetch: refetchEmbeddings } = useEmbeddingCount(siteId, posts.map(p => p.id));
+  
+  const [pipelinePhase, setPipelinePhase] = useState<PipelinePhase>('idle');
   const [crawlProgress, setCrawlProgress] = useState<{ progress: number; total: number; phase: string } | null>(null);
-  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState<string>('');
   const [search, setSearch] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Cleanup poll on unmount
   useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
   const handleCrawl = useCallback(async () => {
     if (!site) return;
-    setCrawling(true);
+    setPipelinePhase('crawling');
     setCrawlProgress({ progress: 0, total: 0, phase: 'discovering' });
     try {
       const fnName = site.source_type === 'wordpress' ? 'wp-proxy' : 'site-crawl';
@@ -85,7 +119,6 @@ export default function SiteDetail() {
 
       const jobId = data?.jobId;
       if (jobId) {
-        // Poll for progress
         pollRef.current = setInterval(async () => {
           const { data: job } = await supabase
             .from('batch_jobs')
@@ -104,61 +137,64 @@ export default function SiteDetail() {
           if (job.status === 'complete' || job.status === 'error') {
             if (pollRef.current) clearInterval(pollRef.current);
             pollRef.current = null;
-            setCrawling(false);
             setCrawlProgress(null);
 
             if (job.status === 'complete') {
               toast.success(`Crawled ${job.progress} pages`, {
-                description: 'Pages have been indexed. Run analysis to generate suggestions.',
+                description: 'Click "Generate Suggestions" to analyze content.',
               });
+              setPipelinePhase('idle');
             } else {
               toast.error('Crawl failed', { description: job.error || 'Unknown error' });
+              setPipelinePhase('error');
             }
             refetch();
           }
         }, 2000);
       } else {
-        // Legacy: no jobId returned
-        const count = data?.posts?.length ?? data?.pages?.length ?? 0;
-        toast.success(`Crawled ${count} pages`);
-        setCrawling(false);
+        toast.success('Crawl complete');
+        setPipelinePhase('idle');
         setCrawlProgress(null);
         refetch();
       }
     } catch (err: any) {
       toast.error('Crawl failed', { description: err.message || 'Unknown error' });
-      setCrawling(false);
+      setPipelinePhase('error');
       setCrawlProgress(null);
     }
   }, [site, refetch]);
 
   const handleAnalyze = useCallback(async () => {
     if (!siteId) return;
-    setAnalyzing(true);
-    toast.info('Running analysis pipeline…', {
-      description: 'Computing embeddings and generating link suggestions. This may take a minute.',
-    });
+    setPipelinePhase('embedding');
+    setAnalysisProgress('Computing embeddings…');
 
     try {
       const result = await executeBatchSaga(siteId);
       if (result.ok === true) {
         const ctx = result.value;
-        toast.success(`Analysis complete!`, {
-          description: `${ctx.metrics.embeddingsComputed} embeddings, ${ctx.metrics.suggestionsGenerated} suggestions generated.`,
+        setPipelinePhase('done');
+        setAnalysisProgress('');
+        toast.success('Analysis complete!', {
+          description: `${ctx.metrics.embeddingsComputed} embeddings, ${ctx.metrics.suggestionsGenerated} suggestions.`,
         });
         queryClient.invalidateQueries({ queryKey: ['suggestions'] });
-      } else if (result.ok === false) {
+        refetchSuggestions();
+        refetchEmbeddings();
+      } else {
+        setPipelinePhase('error');
+        setAnalysisProgress('');
         const err = result.error as any;
         toast.error('Analysis failed', {
-          description: err?.step ? `Failed at step: ${err.step}` : 'Unknown error',
+          description: err?.cause ? String(err.cause) : err?.step ? `Failed at: ${err.step}` : 'Unknown error',
         });
       }
     } catch (err: any) {
+      setPipelinePhase('error');
+      setAnalysisProgress('');
       toast.error('Analysis failed', { description: err.message || 'Unknown error' });
-    } finally {
-      setAnalyzing(false);
     }
-  }, [siteId, queryClient]);
+  }, [siteId, queryClient, refetchSuggestions, refetchEmbeddings]);
 
   const filtered = search
     ? posts.filter(p => p.title.toLowerCase().includes(search.toLowerCase()) || p.url.toLowerCase().includes(search.toLowerCase()))
@@ -185,6 +221,7 @@ export default function SiteDetail() {
 
   const isWP = site.source_type === 'wordpress';
   const totalWords = posts.reduce((sum, p) => sum + (p.word_count ?? 0), 0);
+  const isBusy = pipelinePhase !== 'idle' && pipelinePhase !== 'done' && pipelinePhase !== 'error';
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -207,59 +244,143 @@ export default function SiteDetail() {
             {site.url.replace(/^https?:\/\//, '')} <ExternalLink className="h-3 w-3" />
           </a>
         }
-        actions={
-          <div className="flex gap-2">
-            <Button onClick={handleCrawl} disabled={crawling || analyzing} size="sm" className="rounded-xl" variant="outline">
-              {crawling ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
-              {crawling ? 'Crawling…' : 'Crawl Pages'}
-            </Button>
-            {posts.length > 0 && (
-              <Button onClick={handleAnalyze} disabled={analyzing || crawling} size="sm" className="rounded-xl">
-                {analyzing ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Sparkles className="mr-1.5 h-4 w-4" />}
-                {analyzing ? 'Analyzing…' : 'Generate Suggestions'}
-              </Button>
-            )}
-          </div>
-        }
       />
 
-      {/* Crawl progress bar */}
-      {crawlProgress && (
-        <Card>
-          <CardContent className="py-3 px-4">
-            <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
-              <span className="capitalize font-medium">{crawlProgress.phase}…</span>
-              <span className="font-mono tabular-nums">
-                {crawlProgress.progress}/{crawlProgress.total || '?'}
-              </span>
+      {/* Pipeline Actions */}
+      <Card className="overflow-hidden border-primary/10">
+        <CardContent className="p-4 sm:p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+            {/* Pipeline steps indicator */}
+            <div className="flex items-center gap-3 flex-1">
+              <PipelineStep 
+                step={1} 
+                label="Crawl" 
+                active={pipelinePhase === 'crawling'} 
+                done={posts.length > 0} 
+              />
+              <div className="h-px w-4 bg-border" />
+              <PipelineStep 
+                step={2} 
+                label="Embed" 
+                active={pipelinePhase === 'embedding'} 
+                done={embeddingCount > 0} 
+              />
+              <div className="h-px w-4 bg-border" />
+              <PipelineStep 
+                step={3} 
+                label="Suggest" 
+                active={pipelinePhase === 'suggesting'} 
+                done={suggestionCount > 0} 
+              />
             </div>
-            <Progress
-              value={crawlProgress.total > 0 ? (crawlProgress.progress / crawlProgress.total) * 100 : 0}
-              className="h-2"
-            />
-          </CardContent>
-        </Card>
-      )}
+
+            {/* Action buttons */}
+            <div className="flex gap-2 shrink-0">
+              <Button 
+                onClick={handleCrawl} 
+                disabled={isBusy} 
+                size="sm" 
+                className="rounded-xl" 
+                variant="outline"
+              >
+                {pipelinePhase === 'crawling' ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
+                {pipelinePhase === 'crawling' ? 'Crawling…' : posts.length > 0 ? 'Re-crawl' : 'Crawl Pages'}
+              </Button>
+              {posts.length > 0 && (
+                <Button 
+                  onClick={handleAnalyze} 
+                  disabled={isBusy} 
+                  size="sm" 
+                  className="rounded-xl shadow-soft"
+                >
+                  {pipelinePhase === 'embedding' || pipelinePhase === 'suggesting' 
+                    ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> 
+                    : <Sparkles className="mr-1.5 h-4 w-4" />
+                  }
+                  {pipelinePhase === 'embedding' ? 'Computing…' : pipelinePhase === 'suggesting' ? 'Analyzing…' : 'Generate Suggestions'}
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Progress indicator */}
+          {crawlProgress && (
+            <div className="mt-4 pt-4 border-t border-border/50">
+              <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+                <span className="capitalize font-medium">{crawlProgress.phase}…</span>
+                <span className="font-mono tabular-nums">
+                  {crawlProgress.progress}/{crawlProgress.total || '?'}
+                </span>
+              </div>
+              <Progress
+                value={crawlProgress.total > 0 ? (crawlProgress.progress / crawlProgress.total) * 100 : 0}
+                className="h-2"
+              />
+            </div>
+          )}
+
+          {analysisProgress && (
+            <div className="mt-4 pt-4 border-t border-border/50">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                <span className="font-medium">{analysisProgress}</span>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Stats strip */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { label: 'Pages', value: posts.length, icon: FileText, color: 'text-primary bg-primary/6 border-primary/10' },
           { label: 'Total Words', value: totalWords.toLocaleString(), icon: Type, color: 'text-accent bg-accent/6 border-accent/10' },
-          { label: 'Avg Words', value: posts.length > 0 ? Math.round(totalWords / posts.length).toLocaleString() : '0', icon: Hash, color: 'text-success bg-success/6 border-success/10' },
-        ].map((stat) => (
-          <Card key={stat.label}>
-            <CardContent className="py-3 px-4 text-center">
-              <div className={cn('inline-flex rounded-lg p-1.5 border mb-2', stat.color)}>
-                <stat.icon className="h-3.5 w-3.5" />
-              </div>
-              <p className="text-lg sm:text-xl font-extrabold tabular-nums leading-none">{stat.value}</p>
-              <p className="text-[10px] font-medium text-muted-foreground mt-1">{stat.label}</p>
-            </CardContent>
-          </Card>
+          { label: 'Embeddings', value: embeddingCount, icon: Hash, color: 'text-info bg-info/6 border-info/10' },
+          { label: 'Suggestions', value: suggestionCount, icon: Link2, color: 'text-success bg-success/6 border-success/10' },
+        ].map((stat, i) => (
+          <motion.div
+            key={stat.label}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.04, duration: 0.3 }}
+          >
+            <Card>
+              <CardContent className="py-3 px-4 text-center">
+                <div className={cn('inline-flex rounded-lg p-1.5 border mb-2', stat.color)}>
+                  <stat.icon className="h-3.5 w-3.5" />
+                </div>
+                <p className="text-lg sm:text-xl font-extrabold tabular-nums leading-none">{stat.value}</p>
+                <p className="text-[10px] font-medium text-muted-foreground mt-1">{stat.label}</p>
+              </CardContent>
+            </Card>
+          </motion.div>
         ))}
       </div>
 
+      {/* Suggestions CTA */}
+      {suggestionCount > 0 && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+          <Link to="/suggestions">
+            <Card className="group cursor-pointer transition-all duration-300 hover:shadow-card-hover hover:-translate-y-0.5 border-success/15 bg-success/3">
+              <CardContent className="flex items-center gap-4 p-4">
+                <div className="rounded-xl p-2.5 bg-success/10 border border-success/15 group-hover:scale-105 transition-transform">
+                  <Link2 className="h-5 w-5 text-success" />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-bold group-hover:text-success transition-colors">
+                    {suggestionCount} Link Suggestions Ready
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Review and approve AI-generated internal linking opportunities →
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+        </motion.div>
+      )}
+
+      {/* Posts list */}
       <Card className="overflow-hidden">
         <CardHeader className="pb-3 border-b border-border/50 bg-muted/20">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -268,10 +389,10 @@ export default function SiteDetail() {
                 <div className="h-6 w-6 rounded-lg bg-primary/8 flex items-center justify-center">
                   <FileText className="h-3.5 w-3.5 text-primary" />
                 </div>
-                Pages
+                Indexed Pages
                 <Badge variant="secondary" className="text-[10px] font-mono font-bold ml-1 rounded-md">{posts.length}</Badge>
               </CardTitle>
-              <CardDescription className="text-[11px] mt-0.5">Indexed content from this site</CardDescription>
+              <CardDescription className="text-[11px] mt-0.5">Content discovered from this site</CardDescription>
             </div>
             {posts.length > 0 && (
               <div className="relative w-full sm:w-52">
@@ -298,13 +419,13 @@ export default function SiteDetail() {
               />
             </div>
           ) : (
-            <div className="divide-y divide-border/40">
+            <div className="divide-y divide-border/40 max-h-[500px] overflow-y-auto scrollbar-thin">
               {filtered.map((post, i) => (
                 <motion.div
                   key={post.id}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  transition={{ delay: Math.min(i * 0.02, 0.3) }}
+                  transition={{ delay: Math.min(i * 0.015, 0.2) }}
                   className="flex items-center justify-between px-4 sm:px-5 py-3 gap-4 group hover:bg-muted/20 transition-colors"
                 >
                   <div className="min-w-0 flex-1">
@@ -331,6 +452,30 @@ export default function SiteDetail() {
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// ─── Pipeline Step Indicator ────────────────────────────────────
+
+function PipelineStep({ step, label, active, done }: { step: number; label: string; active: boolean; done: boolean }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      {active ? (
+        <div className="relative">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+        </div>
+      ) : done ? (
+        <CheckCircle2 className="h-4 w-4 text-success" />
+      ) : (
+        <Circle className="h-4 w-4 text-muted-foreground/30" />
+      )}
+      <span className={cn(
+        'text-xs font-medium',
+        active ? 'text-primary' : done ? 'text-foreground' : 'text-muted-foreground/50'
+      )}>
+        {label}
+      </span>
     </div>
   );
 }
