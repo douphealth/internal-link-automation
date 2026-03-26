@@ -165,17 +165,28 @@ async function stepFetchPosts(ctx: BatchContext): Promise<Result<void, SagaError
   const phaseStart = performance.now();
   console.log('[BatchOrchestrator] Fetching posts...');
 
-  const { data: posts, error } = await supabase
-    .from('posts')
-    .select('id, title, content, url')
-    .eq('site_id', ctx.siteId)
-    .limit(1000);
+  // Paginate to get ALL posts (Supabase limit is 1000 per query)
+  let allPosts: any[] = [];
+  let page = 0;
+  const PAGE_SIZE = 1000;
 
-  if (error) {
-    return Err({ type: 'SAGA_STEP_FAILED', step: 'fetch-posts', phase: 'fetching', cause: error, recoverable: true });
+  while (true) {
+    const { data: posts, error } = await supabase
+      .from('posts')
+      .select('id, title, content, url')
+      .eq('site_id', ctx.siteId)
+      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+    if (error) {
+      return Err({ type: 'SAGA_STEP_FAILED', step: 'fetch-posts', phase: 'fetching', cause: error, recoverable: true });
+    }
+
+    allPosts = allPosts.concat(posts || []);
+    if (!posts || posts.length < PAGE_SIZE) break;
+    page++;
   }
 
-  ctx.posts = (posts || []).map(p => ({
+  ctx.posts = allPosts.map(p => ({
     id: p.id,
     title: p.title,
     content: p.content || '',
@@ -203,34 +214,44 @@ async function stepComputeEmbeddings(ctx: BatchContext): Promise<Result<void, Sa
   await updateBatchJob(ctx.jobId, { phase: 'embedding', progress: 0, total: ctx.posts.length });
 
   // Check which posts already have embeddings
-  const { data: existing } = await supabase
-    .from('embeddings')
-    .select('post_id')
-    .in('post_id', ctx.posts.map(p => p.id));
+  const postIds = ctx.posts.map(p => p.id);
+  const existingIds = new Set<string>();
 
-  const existingIds = new Set((existing || []).map(e => e.post_id));
+  // Paginate the existing check too
+  for (let i = 0; i < postIds.length; i += 500) {
+    const batch = postIds.slice(i, i + 500);
+    const { data: existing } = await supabase
+      .from('embeddings')
+      .select('post_id')
+      .in('post_id', batch);
+    for (const e of existing || []) {
+      existingIds.add(e.post_id);
+    }
+  }
+
   const needsEmbedding = ctx.posts.filter(p => !existingIds.has(p.id));
 
   console.log(`[BatchOrchestrator] ${existingIds.size} cached, ${needsEmbedding.length} need computation`);
 
-  // Process in batches of 5 (to stay within edge function limits)
+  // Process in batches of 5
   const BATCH_SIZE = 5;
+  let computed = 0;
   for (let i = 0; i < needsEmbedding.length; i += BATCH_SIZE) {
     const batch = needsEmbedding.slice(i, i + BATCH_SIZE);
 
     const texts = batch.map(p => `${p.title}. ${stripHtml(p.content).slice(0, 1500)}`);
-    const postIds = batch.map(p => p.id);
+    const batchPostIds = batch.map(p => p.id);
 
     const result = await retryWithBackoff(async () => {
       const { data, error } = await supabase.functions.invoke('compute-embeddings', {
-        body: { texts, postIds },
+        body: { texts, postIds: batchPostIds },
       });
 
       if (error) {
         console.warn('[BatchOrchestrator] Embedding error:', error);
         return Err(error);
       }
-      
+
       if (data?.error) {
         console.warn('[BatchOrchestrator] Embedding API error:', data.error);
         return Err(data.error);
@@ -247,33 +268,35 @@ async function stepComputeEmbeddings(ctx: BatchContext): Promise<Result<void, Sa
 
     if (isErr(result)) {
       console.error('[BatchOrchestrator] Embedding batch failed after retries:', result.error);
-      // Continue with remaining batches rather than failing entirely
       continue;
     }
 
-    const progress = Math.min(i + BATCH_SIZE, needsEmbedding.length) + existingIds.size;
+    computed += batch.length;
+    const progress = computed + existingIds.size;
     await updateBatchJob(ctx.jobId, { progress, total: ctx.posts.length });
-    
-    appEventBus.emit('batch:progress', { 
-      jobId: ctx.jobId, 
-      progress, 
+
+    appEventBus.emit('batch:progress', {
+      jobId: ctx.jobId,
+      progress,
       total: ctx.posts.length,
     });
   }
 
-  // Fetch all embeddings from DB
-  const { data: allEmbeddings } = await supabase
-    .from('embeddings')
-    .select('post_id, embedding')
-    .in('post_id', ctx.posts.map(p => p.id));
+  // Fetch all embeddings from DB (paginated)
+  for (let i = 0; i < postIds.length; i += 500) {
+    const batch = postIds.slice(i, i + 500);
+    const { data: allEmbeddings } = await supabase
+      .from('embeddings')
+      .select('post_id, embedding')
+      .in('post_id', batch);
 
-  for (const emb of (allEmbeddings || [])) {
-    try {
-      // The embedding column is stored as a vector type, returned as a string like "[0.1,0.2,...]"
-      const parsed = typeof emb.embedding === 'string' ? JSON.parse(emb.embedding) : emb.embedding;
-      ctx.embeddings.set(emb.post_id, parsed);
-    } catch (e) {
-      console.warn(`[BatchOrchestrator] Failed to parse embedding for ${emb.post_id}:`, e);
+    for (const emb of (allEmbeddings || [])) {
+      try {
+        const parsed = typeof emb.embedding === 'string' ? JSON.parse(emb.embedding) : emb.embedding;
+        ctx.embeddings.set(emb.post_id, parsed);
+      } catch (e) {
+        console.warn(`[BatchOrchestrator] Failed to parse embedding for ${emb.post_id}:`, e);
+      }
     }
   }
 
@@ -304,12 +327,11 @@ async function stepGenerateSuggestions(ctx: BatchContext): Promise<Result<void, 
     if (!embedding) continue;
 
     try {
-      // Format embedding as pgvector string: "[0.1,0.2,...]"
       const embeddingStr = `[${embedding.join(',')}]`;
 
       const { data: similar, error } = await supabase.rpc('match_posts', {
         query_embedding: embeddingStr,
-        match_threshold: 0.3, // Lower threshold to get more results
+        match_threshold: 0.15,
         match_count: 10,
         exclude_post_id: post.id,
       });
@@ -330,16 +352,18 @@ async function stepGenerateSuggestions(ctx: BatchContext): Promise<Result<void, 
         ctx.suggestions.set(post.id, suggestions);
         totalSuggestions += suggestions.length;
 
-        // Store suggestions
+        // Store suggestions in batches
+        const rows = suggestions.map((s: any) => ({
+          source_post_id: post.id,
+          target_post_id: s.targetPostId,
+          anchor_text: s.anchorText,
+          similarity_score: s.score,
+          context_snippet: s.context,
+          status: 'pending',
+        }));
+
         const { error: upsertError } = await supabase.from('link_suggestions').upsert(
-          suggestions.map((s: any) => ({
-            source_post_id: post.id,
-            target_post_id: s.targetPostId,
-            anchor_text: s.anchorText,
-            similarity_score: s.score,
-            context_snippet: s.context,
-            status: 'pending',
-          })),
+          rows,
           { onConflict: 'source_post_id,target_post_id' }
         );
 
