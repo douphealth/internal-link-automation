@@ -6,13 +6,13 @@ describe('Result', () => {
     it('creates Ok result', () => {
       const r = Ok(42);
       expect(r.ok).toBe(true);
-      expect(r.value).toBe(42);
+      expect(isOk(r) ? r.value : undefined).toBe(42);
     });
 
     it('creates Err result', () => {
       const r = Err('fail');
       expect(r.ok).toBe(false);
-      expect(r.error).toBe('fail');
+      expect(isErr(r) ? r.error : undefined).toBe('fail');
     });
   });
 
@@ -51,48 +51,48 @@ describe('Result', () => {
   describe('map', () => {
     it('transforms Ok value', () => {
       const r = map(Ok(5), x => x * 2);
-      expect(isOk(r) && r.value).toBe(10);
+      expect(isOk(r) ? r.value : undefined).toBe(10);
     });
 
     it('passes through Err', () => {
-      const r = map(Err('e'), (x: number) => x * 2);
-      expect(isErr(r) && r.error).toBe('e');
+      const r = map(Err('e') as ReturnType<typeof Err<string>>, (_x: number) => _x * 2);
+      expect(isErr(r) ? r.error : undefined).toBe('e');
     });
   });
 
   describe('mapErr', () => {
     it('transforms Err', () => {
       const r = mapErr(Err('e'), e => e.toUpperCase());
-      expect(isErr(r) && r.error).toBe('E');
+      expect(isErr(r) ? r.error : undefined).toBe('E');
     });
 
     it('passes through Ok', () => {
-      const r = mapErr(Ok(1), (e: string) => e.toUpperCase());
-      expect(isOk(r) && r.value).toBe(1);
+      const r = mapErr(Ok(1), (_e: string) => _e.toUpperCase());
+      expect(isOk(r) ? r.value : undefined).toBe(1);
     });
   });
 
   describe('flatMap', () => {
     it('chains Ok results', () => {
       const r = flatMap(Ok(5), x => Ok(x + 1));
-      expect(isOk(r) && r.value).toBe(6);
+      expect(isOk(r) ? r.value : undefined).toBe(6);
     });
 
     it('short-circuits on Err', () => {
-      const r = flatMap(Err('e'), (_x: number) => Ok(99));
-      expect(isErr(r) && r.error).toBe('e');
+      const r = flatMap(Err('e') as ReturnType<typeof Err<string>>, (_x: number) => Ok(99));
+      expect(isErr(r) ? r.error : undefined).toBe('e');
     });
   });
 
   describe('fromPromise', () => {
     it('converts resolved promise to Ok', async () => {
       const r = await fromPromise(Promise.resolve(42));
-      expect(isOk(r) && r.value).toBe(42);
+      expect(isOk(r) ? r.value : undefined).toBe(42);
     });
 
     it('converts rejected promise to Err', async () => {
       const r = await fromPromise(Promise.reject(new Error('fail')));
-      expect(isErr(r) && r.error.message).toBe('fail');
+      expect(isErr(r) ? r.error.message : undefined).toBe('fail');
     });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CircuitBreaker } from '@/shared/kernel/CircuitBreaker';
-import { Ok, Err, isErr } from '@/shared/kernel/Result';
+import { Ok, Err, isErr, isOk } from '@/shared/kernel/Result';
 
 describe('CircuitBreaker', () => {
   it('starts in CLOSED state', () => {
@@ -11,8 +11,7 @@ describe('CircuitBreaker', () => {
   it('passes through successful calls', async () => {
     const cb = new CircuitBreaker('test');
     const result = await cb.execute(() => Promise.resolve(Ok(42)));
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value).toBe(42);
+    expect(isOk(result) ? result.value : undefined).toBe(42);
   });
 
   it('opens after failure threshold', async () => {
@@ -41,7 +40,7 @@ describe('CircuitBreaker', () => {
 
     const result = await cb.execute(() => Promise.resolve(Ok(1)));
     expect(isErr(result)).toBe(true);
-    if (!result.ok) {
+    if (isErr(result)) {
       expect((result.error as { type: string }).type).toBe('CIRCUIT_OPEN');
     }
   });
@@ -60,8 +59,7 @@ describe('CircuitBreaker', () => {
       () => Promise.resolve(Ok(1)),
       () => Promise.resolve(Ok(-1))
     );
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value).toBe(-1);
+    expect(isOk(result) ? result.value : undefined).toBe(-1);
   });
 
   it('tracks metrics correctly', async () => {
