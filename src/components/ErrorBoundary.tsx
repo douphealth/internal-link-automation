@@ -28,6 +28,28 @@ export class ErrorBoundary extends Component<Props, State> {
       componentStack: errorInfo.componentStack || 'N/A',
     });
     this.setState({ errorInfo });
+
+    // Report to Supabase analytics_events for production monitoring
+    this.reportError(error, errorInfo);
+  }
+
+  private async reportError(error: Error, errorInfo: ErrorInfo): Promise<void> {
+    try {
+      const { supabase } = await import('@/integrations/supabase/client');
+      await supabase.from('analytics_events').insert({
+        event_type: 'error:boundary',
+        payload: {
+          message: error.message,
+          stack: error.stack?.slice(0, 2000),
+          componentStack: errorInfo.componentStack?.slice(0, 2000),
+          context: this.props.context || 'UI',
+          url: window.location.href,
+          timestamp: new Date().toISOString(),
+        } as any,
+      });
+    } catch (_reportErr) {
+      // Silently fail — don't cascade errors from error reporting
+    }
   }
 
   handleReset = (): void => {
