@@ -9,9 +9,9 @@ const corsHeaders = {
 };
 
 const MAX_PAGES = 1000;
-const CONCURRENCY = 8;
-const FETCH_TIMEOUT_MS = 12_000;
-const USER_AGENT = "LinkForge/2.0 (internal-link-analysis-bot)";
+const CONCURRENCY = 12;
+const FETCH_TIMEOUT_MS = 15_000;
+const USER_AGENT = "LinkForge/2.1 (internal-link-analysis-bot)";
 
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -36,6 +36,17 @@ serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
+    // Fetch existing content hashes for incremental crawling
+    const { data: existingPosts } = await supabase
+      .from("posts")
+      .select("url, content_hash")
+      .eq("site_id", site_id);
+
+    const existingHashes = new Map<string, string>();
+    for (const p of existingPosts || []) {
+      existingHashes.set(p.url, p.content_hash);
+    }
+
     // Create batch job
     const { data: job } = await supabase
       .from("batch_jobs")
@@ -52,9 +63,10 @@ serve(async (req: Request) => {
 
     const jobId = job?.id;
 
-    // Return immediately, process in background
-    const crawlPromise = runCrawl(supabase, site_id, url, jobId);
+    // Process crawl — edge functions have ~400s wall time
+    const crawlPromise = runCrawl(supabase, site_id, url, jobId, existingHashes);
 
+    // Use waitUntil if available, otherwise await
     if (typeof (globalThis as any).EdgeRuntime !== "undefined" && (globalThis as any).EdgeRuntime.waitUntil) {
       (globalThis as any).EdgeRuntime.waitUntil(crawlPromise);
     } else {
@@ -74,18 +86,23 @@ serve(async (req: Request) => {
   }
 });
 
-async function runCrawl(supabase: any, siteId: string, url: string, jobId: string | undefined) {
+async function runCrawl(
+  supabase: any,
+  siteId: string,
+  url: string,
+  jobId: string | undefined,
+  existingHashes: Map<string, string>
+) {
   try {
-    // Phase 1: Discover URLs
+    // Phase 1: Discover URLs via sitemap first, then BFS fallback
     console.log(`[site-crawl] Discovering URLs for ${url}`);
     let urlsToFetch = await discoverFromSitemap(url);
-    
+
     if (urlsToFetch.length === 0) {
-      console.log("[site-crawl] No sitemap found, crawling from homepage with BFS");
+      console.log("[site-crawl] No sitemap found, crawling via BFS");
       urlsToFetch = await discoverViaBFS(url);
     }
 
-    // Deduplicate and limit
     urlsToFetch = [...new Set(urlsToFetch)].slice(0, MAX_PAGES);
     console.log(`[site-crawl] Discovered ${urlsToFetch.length} unique URLs`);
 
@@ -100,78 +117,96 @@ async function runCrawl(supabase: any, siteId: string, url: string, jobId: strin
     // Phase 2: Fetch pages with concurrency control
     const pages: PageResult[] = [];
     let processed = 0;
+    let skippedUnchanged = 0;
 
     for (let i = 0; i < urlsToFetch.length; i += CONCURRENCY) {
       const batch = urlsToFetch.slice(i, i + CONCURRENCY);
-      const results = await Promise.allSettled(batch.map(fetchPage));
+      const results = await Promise.allSettled(
+        batch.map(pageUrl => fetchPage(pageUrl, existingHashes))
+      );
 
       for (const result of results) {
-        if (result.status === "fulfilled" && result.value) {
-          pages.push(result.value);
+        if (result.status === "fulfilled") {
+          if (result.value === "unchanged") {
+            skippedUnchanged++;
+          } else if (result.value) {
+            pages.push(result.value);
+          }
         }
       }
 
       processed = Math.min(i + CONCURRENCY, urlsToFetch.length);
 
-      if (jobId && processed % 20 === 0) {
+      // Update progress every 10 batches
+      if (jobId && (processed % (CONCURRENCY * 3) === 0 || processed === urlsToFetch.length)) {
         await supabase.from("batch_jobs").update({
           progress: processed,
-          metadata: { site_id: siteId, url, pagesFound: urlsToFetch.length, pagesCrawled: pages.length },
+          metadata: {
+            site_id: siteId,
+            url,
+            pagesFound: urlsToFetch.length,
+            pagesCrawled: pages.length,
+            skippedUnchanged,
+          },
         }).eq("id", jobId);
       }
     }
 
-    console.log(`[site-crawl] Fetched ${pages.length}/${urlsToFetch.length} pages`);
+    console.log(`[site-crawl] Fetched ${pages.length} new/changed, ${skippedUnchanged} unchanged, ${urlsToFetch.length - pages.length - skippedUnchanged} failed`);
 
     // Phase 3: Upsert into posts table
     if (jobId) {
       await supabase.from("batch_jobs").update({ phase: "storing" }).eq("id", jobId);
     }
 
-    const UPSERT_BATCH = 25;
+    const UPSERT_BATCH = 50;
     for (let i = 0; i < pages.length; i += UPSERT_BATCH) {
       const batch = pages.slice(i, i + UPSERT_BATCH);
-      const rows = await Promise.all(batch.map(async (page) => {
-        const contentHash = await sha256(page.content);
-        const slug = safeSlug(page.url);
-        return {
-          site_id: siteId,
-          title: page.title.slice(0, 500),
-          slug,
-          url: page.url,
-          content: page.content.slice(0, 100_000),
-          content_hash: contentHash,
-          word_count: page.wordCount,
-          source_type: "generic",
-          status: "publish",
-          fetched_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
+      const rows = batch.map((page) => ({
+        site_id: siteId,
+        title: page.title.slice(0, 500),
+        slug: safeSlug(page.url),
+        url: page.url,
+        content: page.content.slice(0, 100_000),
+        content_hash: page.contentHash,
+        word_count: page.wordCount,
+        source_type: "generic",
+        status: "publish",
+        fetched_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       }));
 
       const { error } = await supabase.from("posts").upsert(rows, { onConflict: "url" });
       if (error) {
         console.warn(`[site-crawl] Upsert batch error:`, error.message);
-        // Try one-by-one fallback
         for (const row of rows) {
           await supabase.from("posts").upsert(row, { onConflict: "url" }).catch(() => {});
         }
       }
     }
 
-    // Mark complete
+    // Final total = new pages + unchanged (existing)
+    const totalStored = pages.length + skippedUnchanged;
+
     if (jobId) {
       await supabase.from("batch_jobs").update({
         status: "complete",
         phase: "done",
-        progress: pages.length,
+        progress: totalStored,
         total: urlsToFetch.length,
         completed_at: new Date().toISOString(),
-        metadata: { site_id: siteId, url, pagesFound: urlsToFetch.length, pagesCrawled: pages.length },
+        metadata: {
+          site_id: siteId,
+          url,
+          pagesFound: urlsToFetch.length,
+          pagesCrawled: pages.length,
+          skippedUnchanged,
+          totalStored,
+        },
       }).eq("id", jobId);
     }
 
-    console.log(`[site-crawl] Complete: ${pages.length} pages stored`);
+    console.log(`[site-crawl] Complete: ${totalStored} total pages (${pages.length} new, ${skippedUnchanged} cached)`);
   } catch (error) {
     console.error("[site-crawl] Background error:", error);
     if (jobId) {
@@ -188,11 +223,15 @@ interface PageResult {
   url: string;
   title: string;
   content: string;
+  contentHash: string;
   wordCount: number;
 }
 
-// ─── Page Fetcher ───────────────────────────────────────────────
-async function fetchPage(pageUrl: string): Promise<PageResult | null> {
+// ─── Page Fetcher with incremental support ──────────────────────
+async function fetchPage(
+  pageUrl: string,
+  existingHashes: Map<string, string>
+): Promise<PageResult | "unchanged" | null> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -219,30 +258,33 @@ async function fetchPage(pageUrl: string): Promise<PageResult | null> {
     const html = await resp.text();
     if (html.length < 100) return null;
 
+    // Quick hash check before expensive parsing
+    const contentHash = await sha256(html);
+    if (existingHashes.get(pageUrl) === contentHash) {
+      return "unchanged";
+    }
+
     const doc = new DOMParser().parseFromString(html, "text/html");
     if (!doc) return null;
 
     // Remove non-content elements
-    const removeSelectors = "script, style, nav, footer, header, noscript, svg, iframe, aside, .sidebar, .menu, .nav, .footer, .header, .advertisement, .ads, .cookie-notice";
+    const removeSelectors = "script, style, nav, footer, header, noscript, svg, iframe, aside, .sidebar, .menu, .nav, .footer, .header, .advertisement, .ads, .cookie-notice, .popup, .modal, .social-share, .comments, #comments";
     doc.querySelectorAll(removeSelectors).forEach((el) => el.remove());
 
     const title = doc.querySelector("title")?.textContent?.trim() ||
                   doc.querySelector("h1")?.textContent?.trim() ||
                   pageUrl;
 
-    // Extract main content HTML
     const mainEl = doc.querySelector("main, article, [role='main'], .post-content, .entry-content, .article-content, .content, #content, .page-content");
     const contentHtml = mainEl?.innerHTML || doc.querySelector("body")?.innerHTML || "";
 
-    // Calculate word count from clean text
     const bodyText = (mainEl || doc.querySelector("body"))?.textContent || "";
     const cleanText = bodyText.replace(/\s+/g, " ").trim();
     const wordCount = cleanText.split(/\s+/).filter(Boolean).length;
 
-    // Skip very thin pages
     if (wordCount < 30) return null;
 
-    return { url: pageUrl, title, content: contentHtml, wordCount };
+    return { url: pageUrl, title, content: contentHtml, contentHash, wordCount };
   } catch {
     return null;
   }
@@ -261,8 +303,8 @@ async function discoverFromSitemap(baseUrl: string): Promise<string[]> {
       if (!resp.ok) { await resp.body?.cancel(); continue; }
 
       const xml = await resp.text();
-      
-      // Check for sitemap index (contains sub-sitemaps)
+
+      // Check for sitemap index
       const subSitemaps: string[] = [];
       const sitemapMatches = xml.matchAll(/<sitemap>[\s\S]*?<loc>\s*(.*?)\s*<\/loc>[\s\S]*?<\/sitemap>/gi);
       for (const m of sitemapMatches) {
@@ -270,10 +312,9 @@ async function discoverFromSitemap(baseUrl: string): Promise<string[]> {
       }
 
       if (subSitemaps.length > 0) {
-        // Process sub-sitemaps in parallel (max 10)
         console.log(`[site-crawl] Found ${subSitemaps.length} sub-sitemaps`);
         const subResults = await Promise.allSettled(
-          subSitemaps.slice(0, 15).map(async (subUrl) => {
+          subSitemaps.slice(0, 20).map(async (subUrl) => {
             try {
               const subResp = await fetch(subUrl, { headers: { "User-Agent": USER_AGENT } });
               if (!subResp.ok) return [];
@@ -286,7 +327,6 @@ async function discoverFromSitemap(baseUrl: string): Promise<string[]> {
           if (r.status === "fulfilled") urls.push(...r.value);
         }
       } else {
-        // Direct sitemap with <url><loc> entries
         urls.push(...extractLocsFromXml(xml));
       }
 
@@ -294,7 +334,7 @@ async function discoverFromSitemap(baseUrl: string): Promise<string[]> {
     } catch {}
   }
 
-  // Also try robots.txt for additional sitemap references
+  // Also check robots.txt
   if (urls.length === 0) {
     try {
       const robotsResp = await fetch(`${baseUrl}/robots.txt`, { headers: { "User-Agent": USER_AGENT } });
@@ -330,10 +370,6 @@ function extractLocsFromXml(xml: string): string[] {
   return urls;
 }
 
-/**
- * BFS crawl from homepage to discover internal pages.
- * Follows internal links up to 3 levels deep.
- */
 async function discoverViaBFS(baseUrl: string): Promise<string[]> {
   const visited = new Set<string>();
   const queue: Array<{ url: string; depth: number }> = [{ url: baseUrl, depth: 0 }];
@@ -348,9 +384,13 @@ async function discoverViaBFS(baseUrl: string): Promise<string[]> {
         if (item.depth >= maxDepth) return [];
 
         try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
           const resp = await fetch(item.url, {
             headers: { "User-Agent": USER_AGENT, "Accept": "text/html" },
+            signal: controller.signal,
           });
+          clearTimeout(timeout);
           if (!resp.ok) return [];
 
           const html = await resp.text();

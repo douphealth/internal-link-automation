@@ -7,11 +7,8 @@ const corsHeaders = {
     'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-/**
- * Compute embeddings using Lovable AI gateway.
- * Uses tool-calling to extract a fixed-dimension numeric vector for each text.
- * Falls back to a simple hash-based embedding if AI fails.
- */
+const DIM = 384;
+
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -39,7 +36,7 @@ serve(async (req: Request) => {
     let modelVersion = 'lovable-ai-384';
 
     if (OPENAI_API_KEY) {
-      // Use OpenAI directly if available
+      // OpenAI text-embedding-3-small — best quality
       const response = await fetch('https://api.openai.com/v1/embeddings', {
         method: 'POST',
         headers: {
@@ -49,7 +46,7 @@ serve(async (req: Request) => {
         body: JSON.stringify({
           model: 'text-embedding-3-small',
           input: texts,
-          dimensions: 384,
+          dimensions: DIM,
         }),
       });
 
@@ -62,39 +59,30 @@ serve(async (req: Request) => {
       embeddings = data.data.map((d: { embedding: number[] }) => d.embedding);
       modelVersion = 'text-embedding-3-small';
     } else if (LOVABLE_API_KEY) {
-      // Use Lovable AI to generate semantic embeddings via structured output
+      // Use Lovable AI to extract semantic topics, then hash into vector space
       console.log(`[compute-embeddings] Using Lovable AI for ${texts.length} texts`);
-      
-      // Process texts in small batches to avoid token limits
-      const BATCH = 3;
-      for (let i = 0; i < texts.length; i += BATCH) {
-        const batch = texts.slice(i, i + BATCH);
-        const batchEmbeddings = await generateEmbeddingsViaAI(batch, LOVABLE_API_KEY);
-        embeddings.push(...batchEmbeddings);
-      }
+      embeddings = await generateEmbeddingsViaAI(texts, LOVABLE_API_KEY);
       modelVersion = 'lovable-ai-384';
     } else {
-      return new Response(
-        JSON.stringify({ error: 'No AI API configured. LOVABLE_API_KEY or OPENAI_API_KEY required.' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      // Fallback: deterministic hash-based embeddings (no AI needed)
+      console.log(`[compute-embeddings] No AI key, using hash-based embeddings`);
+      embeddings = texts.map((t: string) => hashToVector(t, DIM));
+      modelVersion = 'hash-384';
     }
 
-    // Store embeddings in database
+    // Store embeddings
     const rows = postIds.map((postId: string, idx: number) => ({
       post_id: postId,
       embedding: JSON.stringify(embeddings[idx]),
       model_version: modelVersion,
     }));
 
-    // Upsert with the unique constraint on (post_id, model_version)
     const { error: insertError } = await supabaseClient
       .from('embeddings')
       .upsert(rows, { onConflict: 'post_id,model_version' });
 
     if (insertError) {
       console.error('Failed to store embeddings:', insertError);
-      // Try inserting one by one to handle partial failures
       for (const row of rows) {
         await supabaseClient.from('embeddings').upsert(row, { onConflict: 'post_id,model_version' });
       }
@@ -121,17 +109,33 @@ serve(async (req: Request) => {
 });
 
 /**
- * Generate semantic embeddings using Lovable AI.
- * We ask the model to produce a numerical vector that captures semantic meaning.
- * Uses a deterministic approach: extract key topics/concepts and hash them into a vector space.
+ * Generate embeddings via Lovable AI.
+ * Send ALL texts in a single prompt to minimize API calls.
  */
 async function generateEmbeddingsViaAI(texts: string[], apiKey: string): Promise<number[][]> {
-  const DIM = 384;
   const embeddings: number[][] = [];
+
+  // Process in batches of 5 to stay within token limits
+  const BATCH = 5;
+  for (let i = 0; i < texts.length; i += BATCH) {
+    const batch = texts.slice(i, i + BATCH);
+    const batchEmbeddings = await generateBatch(batch, apiKey);
+    embeddings.push(...batchEmbeddings);
+
+    // Rate limit protection
+    if (i + BATCH < texts.length) {
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
+
+  return embeddings;
+}
+
+async function generateBatch(texts: string[], apiKey: string): Promise<number[][]> {
+  const results: number[][] = [];
 
   for (const text of texts) {
     try {
-      // Use the LLM to extract key semantic features, then hash into vector
       const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -143,11 +147,11 @@ async function generateEmbeddingsViaAI(texts: string[], apiKey: string): Promise
           messages: [
             {
               role: 'system',
-              content: `You are a semantic analysis engine. Given text, extract exactly 20 key semantic topics/concepts as single words or short phrases. Return ONLY a JSON array of strings, nothing else. Example: ["machine learning","neural networks","data science"]`,
+              content: 'You are a semantic analysis engine. Given text, extract exactly 25 key semantic topics/concepts as single words or short phrases. Return ONLY a JSON array of strings. Example: ["machine learning","data science","python"]',
             },
             {
               role: 'user',
-              content: text.slice(0, 2000),
+              content: text.slice(0, 2500),
             },
           ],
         }),
@@ -156,104 +160,105 @@ async function generateEmbeddingsViaAI(texts: string[], apiKey: string): Promise
       if (!response.ok) {
         if (response.status === 429 || response.status === 402) {
           console.warn(`[compute-embeddings] Rate limited (${response.status}), using hash fallback`);
-          embeddings.push(hashToVector(text, DIM));
+          results.push(hashToVector(text, DIM));
+          await new Promise(r => setTimeout(r, 2000));
           continue;
         }
-        const errText = await response.text();
-        console.warn(`[compute-embeddings] AI error: ${response.status} ${errText}`);
-        embeddings.push(hashToVector(text, DIM));
+        await response.text();
+        results.push(hashToVector(text, DIM));
         continue;
       }
 
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content || '';
-      
-      // Parse the topics and convert to a deterministic vector
+
       let topics: string[] = [];
       try {
-        // Extract JSON array from response
         const jsonMatch = content.match(/\[[\s\S]*?\]/);
         if (jsonMatch) {
           topics = JSON.parse(jsonMatch[0]);
         }
       } catch {
-        // If parsing fails, split by common separators
         topics = content.split(/[,\n]/).map((t: string) => t.replace(/["\[\]]/g, '').trim()).filter(Boolean);
       }
 
       if (topics.length > 0) {
-        // Create embedding from topics: hash each topic into vector positions
-        const vec = new Float32Array(DIM);
-        for (const topic of topics) {
-          const topicHash = simpleHash(topic.toLowerCase().trim());
-          // Distribute topic influence across multiple dimensions
-          for (let d = 0; d < 8; d++) {
-            const idx = Math.abs((topicHash * (d + 1) * 2654435761) | 0) % DIM;
-            vec[idx] += 1.0 / topics.length;
-          }
-        }
-        
-        // Also incorporate word-level features from original text
-        const words = text.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-        const uniqueWords = [...new Set(words)].slice(0, 100);
-        for (const word of uniqueWords) {
-          const wh = simpleHash(word);
-          const idx = Math.abs(wh) % DIM;
-          vec[idx] += 0.01;
-        }
-        
-        // L2 normalize
-        let norm = 0;
-        for (let i = 0; i < DIM; i++) norm += vec[i] * vec[i];
-        norm = Math.sqrt(norm) || 1;
-        const normalized = Array.from(vec).map(v => v / norm);
-        
-        embeddings.push(normalized);
+        results.push(topicsToVector(topics, text));
       } else {
-        embeddings.push(hashToVector(text, DIM));
+        results.push(hashToVector(text, DIM));
       }
 
-      // Small delay between requests to avoid rate limiting
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 150));
     } catch (err) {
-      console.warn(`[compute-embeddings] Failed for text, using fallback:`, err);
-      embeddings.push(hashToVector(text, DIM));
+      console.warn(`[compute-embeddings] Failed, using fallback:`, err);
+      results.push(hashToVector(text, DIM));
     }
   }
 
-  return embeddings;
+  return results;
 }
 
 /**
- * Deterministic hash-based embedding fallback.
- * Produces a normalized vector from text content using word hashing.
+ * Convert extracted topics + text into a normalized embedding vector.
+ */
+function topicsToVector(topics: string[], originalText: string): number[] {
+  const vec = new Float32Array(DIM);
+
+  // Topic-level features (weighted heavily)
+  for (const topic of topics) {
+    const h = simpleHash(topic.toLowerCase().trim());
+    for (let d = 0; d < 12; d++) {
+      const idx = Math.abs((h * (d + 1) * 2654435761) | 0) % DIM;
+      vec[idx] += 1.0 / topics.length;
+    }
+  }
+
+  // Word-level features from original text
+  const words = originalText
+    .toLowerCase()
+    .replace(/<[^>]*>/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 3);
+  const uniqueWords = [...new Set(words)].slice(0, 150);
+  for (const word of uniqueWords) {
+    const wh = simpleHash(word);
+    const idx = Math.abs(wh) % DIM;
+    const sign = (wh & 1) === 0 ? 1 : -1;
+    vec[idx] += sign * 0.02;
+  }
+
+  // L2 normalize
+  let norm = 0;
+  for (let i = 0; i < DIM; i++) norm += vec[i] * vec[i];
+  norm = Math.sqrt(norm) || 1;
+  return Array.from(vec).map(v => v / norm);
+}
+
+/**
+ * Hash-based embedding fallback (no AI needed, deterministic).
  */
 function hashToVector(text: string, dim: number): number[] {
   const vec = new Float32Array(dim);
   const words = text.toLowerCase().replace(/<[^>]*>/g, ' ').split(/\s+/).filter(w => w.length > 2);
-  
-  // Use TF-like weighting with hashing trick
+
   const wordCounts = new Map<string, number>();
   for (const w of words) {
     wordCounts.set(w, (wordCounts.get(w) || 0) + 1);
   }
-  
+
   for (const [word, count] of wordCounts) {
     const h = simpleHash(word);
     const idx = Math.abs(h) % dim;
     const sign = (h & 1) === 0 ? 1 : -1;
     vec[idx] += sign * Math.log2(1 + count);
-    
-    // Bigram-like features
+
     const idx2 = Math.abs(h * 2654435761 | 0) % dim;
     vec[idx2] += sign * 0.5;
   }
-  
-  // L2 normalize
+
   let norm = 0;
   for (let i = 0; i < dim; i++) norm += vec[i] * vec[i];
   norm = Math.sqrt(norm) || 1;
-  
   return Array.from(vec).map(v => v / norm);
 }
 
