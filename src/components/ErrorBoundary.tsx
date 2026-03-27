@@ -1,4 +1,4 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { Component, ErrorInfo, ReactNode } from 'react';
 import { logger } from '@/shared/kernel/Logger';
 import { AlertTriangle, RefreshCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';

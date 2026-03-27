@@ -4,7 +4,7 @@ import { LayoutDashboard, Globe, Link2, BarChart3, Settings, Menu, Zap, ChevronR
 import { cn } from '@/lib/utils';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { _Tooltip, _TooltipContent, _TooltipTrigger } from '@/components/ui/tooltip';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const navItems = [

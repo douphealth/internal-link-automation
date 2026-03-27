@@ -31,7 +31,7 @@ function useAnalyticsData() {
 }
 
 export default function Analytics() {
-  const { data, isLoading } = useAnalyticsData();
+  const { data } = useAnalyticsData();
 
   return (
     <div className="space-y-5 sm:space-y-6">

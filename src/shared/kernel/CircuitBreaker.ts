@@ -3,7 +3,7 @@
  * States: CLOSED (normal) → OPEN (failing) → HALF_OPEN (probing).
  */
 
-import { Result, Ok, Err } from './Result';
+import { Result, Err } from './Result';
 
 type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 

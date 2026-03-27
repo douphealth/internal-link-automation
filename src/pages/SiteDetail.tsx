@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { PostListSkeleton } from '@/components/shared/Skeletons';
-import { ArrowLeft, ExternalLink, RefreshCw, FileText, Search, Loader2, Hash, Type, Sparkles, Link2, CheckCircle2, Circle, Play } from 'lucide-react';
+import { ArrowLeft, ExternalLink, RefreshCw, FileText, Search, Loader2, Hash, Type, Sparkles, Link2, CheckCircle2, Circle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
