@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+
 import { BarChart3, Link2, TrendingUp, Activity } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
@@ -31,7 +31,7 @@ function useAnalyticsData() {
 }
 
 export default function Analytics() {
-  const { data, isLoading } = useAnalyticsData();
+  const { data } = useAnalyticsData();
 
   return (
     <div className="space-y-5 sm:space-y-6">
