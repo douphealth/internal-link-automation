@@ -2,7 +2,7 @@
  * Tests for LinkScanner service.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { scanPostLinks } from '@/contexts/link-automation/services/LinkScanner';
 import { isOk } from '@/shared/kernel/Result';
 

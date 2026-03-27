@@ -2,7 +2,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useQuery } from '@tanstack/react-query';
 import { StatsCards } from '@/components/dashboard/StatsCards';
 import { StatsCardsSkeleton, SuggestionCardSkeleton } from '@/components/shared/Skeletons';
-import { _PageHeader } from '@/components/shared/PageHeader';
+
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/shared/EmptyState';

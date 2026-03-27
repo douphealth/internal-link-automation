@@ -11,7 +11,7 @@ import { StaggerList, StaggerItem } from '@/components/shared/StaggerList';
 import { Check, X, Link2, ArrowRight, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { _motion } from 'framer-motion';
+
 
 interface Suggestion {
   id: string;
