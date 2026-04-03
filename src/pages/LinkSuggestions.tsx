@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState, useCallback } from 'react';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,10 +8,9 @@ import { PageHeader } from '@/components/shared/PageHeader';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { SuggestionCardSkeleton } from '@/components/shared/Skeletons';
 import { StaggerList, StaggerItem } from '@/components/shared/StaggerList';
-import { Check, X, Link2, ArrowRight, TrendingUp } from 'lucide-react';
+import { Check, X, Link2, ArrowRight, TrendingUp, CheckCheck, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-
 
 interface Suggestion {
   id: string;
@@ -45,7 +44,7 @@ function useSuggestions(filter: string) {
           target_post:posts!link_suggestions_target_post_id_fkey(title, url)
         `)
         .order('similarity_score', { ascending: false })
-        .limit(50);
+        .limit(100);
 
       if (filter !== 'all') query = query.eq('status', filter);
       const { data } = await query;
@@ -57,23 +56,60 @@ function useSuggestions(filter: string) {
 
 export default function LinkSuggestions() {
   const [filter, setFilter] = useState<string>('all');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
   const { data: suggestions = [], isLoading } = useSuggestions(filter);
 
-  async function updateStatus(id: string, status: string) {
-    const updates: Record<string, any> = { status };
-    if (status === 'applied') updates.applied_at = new Date().toISOString();
-
-    const { error } = await supabase.from('link_suggestions').update(updates).eq('id', id);
-    if (error) {
-      toast.error('Failed to update suggestion');
-    } else {
-      toast.success(`Suggestion ${status}`, {
-        description: status === 'accepted' ? 'Ready to be applied.' : undefined,
-      });
+  const updateMutation = useMutation({
+    mutationFn: async ({ ids, status }: { ids: string[]; status: string }) => {
+      const updates: Record<string, unknown> = { status };
+      if (status === 'applied') updates.applied_at = new Date().toISOString();
+      
+      for (const id of ids) {
+        const { error } = await supabase.from('link_suggestions').update(updates).eq('id', id);
+        if (error) throw error;
+      }
+    },
+    onMutate: async ({ ids, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['suggestions'] });
+      const prev = queryClient.getQueryData<Suggestion[]>(['suggestions', filter]);
+      
+      queryClient.setQueryData<Suggestion[]>(['suggestions', filter], old =>
+        (old ?? []).map(s => ids.includes(s.id) ? { ...s, status } : s)
+      );
+      
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(['suggestions', filter], ctx.prev);
+      toast.error('Failed to update suggestions');
+    },
+    onSuccess: (_data, { ids, status }) => {
+      toast.success(`${ids.length} suggestion${ids.length > 1 ? 's' : ''} ${status}`);
+      setSelected(new Set());
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['suggestions'] });
-    }
-  }
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+    },
+  });
+
+  const updateStatus = useCallback((id: string, status: string) => {
+    updateMutation.mutate({ ids: [id], status });
+  }, [updateMutation]);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const pendingSuggestions = suggestions.filter(s => s.status === 'pending');
+  const selectAllPending = useCallback(() => {
+    setSelected(new Set(pendingSuggestions.map(s => s.id)));
+  }, [pendingSuggestions]);
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -88,21 +124,59 @@ export default function LinkSuggestions() {
       />
 
       {/* Filter tabs */}
-      <div className="flex gap-1.5 flex-wrap">
-        {filters.map((f) => (
-          <Button
-            key={f}
-            variant={filter === f ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setFilter(f)}
-            className={cn(
-              'h-8 text-xs capitalize rounded-lg',
-              filter === f ? 'shadow-soft' : 'border-border/60 hover:bg-muted/60'
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex gap-1.5 flex-wrap">
+          {filters.map((f) => (
+            <Button
+              key={f}
+              variant={filter === f ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => { setFilter(f); setSelected(new Set()); }}
+              className={cn(
+                'h-8 text-xs capitalize rounded-lg',
+                filter === f ? 'shadow-soft' : 'border-border/60 hover:bg-muted/60'
+              )}
+            >
+              {f}
+            </Button>
+          ))}
+        </div>
+
+        {/* Bulk actions */}
+        {pendingSuggestions.length > 0 && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px] text-muted-foreground"
+              onClick={selected.size > 0 ? () => setSelected(new Set()) : selectAllPending}
+            >
+              {selected.size > 0 ? `Deselect (${selected.size})` : `Select all (${pendingSuggestions.length})`}
+            </Button>
+            {selected.size > 0 && (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-[11px] rounded-lg border-success/30 text-success hover:bg-success/8 gap-1"
+                  onClick={() => updateMutation.mutate({ ids: [...selected], status: 'accepted' })}
+                  disabled={updateMutation.isPending}
+                >
+                  <CheckCheck className="h-3 w-3" /> Accept {selected.size}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-[11px] rounded-lg text-muted-foreground hover:text-destructive gap-1"
+                  onClick={() => updateMutation.mutate({ ids: [...selected], status: 'rejected' })}
+                  disabled={updateMutation.isPending}
+                >
+                  <XCircle className="h-3 w-3" /> Reject {selected.size}
+                </Button>
+              </>
             )}
-          >
-            {f}
-          </Button>
-        ))}
+          </div>
+        )}
       </div>
 
       {isLoading ? (
@@ -123,7 +197,13 @@ export default function LinkSuggestions() {
         <StaggerList>
           {suggestions.map((s) => (
             <StaggerItem key={s.id}>
-              <Card className="transition-all duration-200 hover:shadow-soft overflow-hidden group">
+              <Card
+                className={cn(
+                  'transition-all duration-200 hover:shadow-soft overflow-hidden group',
+                  selected.has(s.id) && 'ring-2 ring-primary/30 shadow-soft'
+                )}
+                onClick={s.status === 'pending' ? () => toggleSelect(s.id) : undefined}
+              >
                 <CardContent className="p-4 sm:p-5">
                   <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                     <div className="flex-1 min-w-0 space-y-2.5">
@@ -170,12 +250,13 @@ export default function LinkSuggestions() {
 
                     {/* Actions */}
                     {s.status === 'pending' && (
-                      <div className="flex sm:flex-col gap-2 shrink-0">
+                      <div className="flex sm:flex-col gap-2 shrink-0" onClick={e => e.stopPropagation()}>
                         <Button
                           size="sm"
                           variant="outline"
                           className="h-8 text-xs rounded-lg border-success/30 text-success hover:bg-success/8 hover:text-success hover:border-success/50"
                           onClick={() => updateStatus(s.id, 'accepted')}
+                          disabled={updateMutation.isPending}
                         >
                           <Check className="h-3.5 w-3.5 mr-1" /> Accept
                         </Button>
@@ -184,6 +265,7 @@ export default function LinkSuggestions() {
                           variant="ghost"
                           className="h-8 text-xs rounded-lg text-muted-foreground hover:text-destructive"
                           onClick={() => updateStatus(s.id, 'rejected')}
+                          disabled={updateMutation.isPending}
                         >
                           <X className="h-3.5 w-3.5 mr-1" /> Reject
                         </Button>
