@@ -91,7 +91,7 @@ const PIE_COLORS = [
 ];
 
 export default function Analytics() {
-  const { data, isLoading } = useAnalyticsData();
+  const { data } = useAnalyticsData();
 
   const stats = [
     { label: 'Sites', value: data?.sitesCount ?? 0, icon: Globe, color: 'text-primary bg-primary/6 border-primary/10' },
