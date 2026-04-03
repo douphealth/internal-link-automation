@@ -19,43 +19,42 @@ interface Site {
   created_at: string;
 }
 
-function useSites() {
+function useSitesWithCounts() {
   return useQuery({
-    queryKey: ['sites'],
+    queryKey: ['sites-with-counts'],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('sites')
-        .select('id, name, url, source_type, created_at')
-        .order('created_at', { ascending: false });
-      return (data ?? []) as Site[];
+      const [{ data: sites }, { data: postCounts }] = await Promise.all([
+        supabase
+          .from('sites')
+          .select('id, name, url, source_type, created_at')
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('posts')
+          .select('site_id')
+      ]);
+
+      // Aggregate post counts client-side (single query instead of N)
+      const counts: Record<string, number> = {};
+      for (const p of postCounts ?? []) {
+        if (p.site_id) {
+          counts[p.site_id] = (counts[p.site_id] ?? 0) + 1;
+        }
+      }
+
+      return {
+        sites: (sites ?? []) as Site[],
+        counts,
+      };
     },
     staleTime: 15_000,
   });
 }
 
-function usePostCounts(siteIds: string[]) {
-  return useQuery({
-    queryKey: ['post-counts', siteIds],
-    queryFn: async () => {
-      const counts: Record<string, number> = {};
-      for (const id of siteIds) {
-        const { count } = await supabase
-          .from('posts')
-          .select('id', { count: 'exact', head: true })
-          .eq('site_id', id);
-        counts[id] = count ?? 0;
-      }
-      return counts;
-    },
-    enabled: siteIds.length > 0,
-    staleTime: 30_000,
-  });
-}
-
 export default function Sites() {
   const [search, setSearch] = useState('');
-  const { data: sites = [], isLoading, refetch } = useSites();
-  const { data: postCounts = {} } = usePostCounts(sites.map(s => s.id));
+  const { data, isLoading, refetch } = useSitesWithCounts();
+  const sites = data?.sites ?? [];
+  const postCounts = data?.counts ?? {};
 
   const filtered = search
     ? sites.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || s.url.toLowerCase().includes(search.toLowerCase()))
@@ -107,7 +106,7 @@ export default function Sites() {
         <StaggerList>
           {filtered.map((site) => (
             <StaggerItem key={site.id}>
-              <SiteCard site={site} postsCount={postCounts[site.id] ?? 0} />
+              <SiteCard site={site} postsCount={postCounts[site.id] ?? 0} onDeleted={() => refetch()} />
             </StaggerItem>
           ))}
         </StaggerList>

@@ -4,7 +4,7 @@ import { LayoutDashboard, Globe, Link2, BarChart3, Settings, Menu, Zap, ChevronR
 import { cn } from '@/lib/utils';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const navItems = [
@@ -55,6 +55,9 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
           </Link>
         );
       })}
+      <div className="pt-2">
+        <ThemeToggle variant="full" />
+      </div>
     </nav>
   );
 }
@@ -121,21 +124,24 @@ export function AppLayout() {
       </aside>
 
       {/* Mobile header */}
-      <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-border/50 bg-card/80 glass px-4 lg:hidden">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-9 w-9 rounded-xl"
-          onClick={() => setMobileOpen(true)}
-        >
-          <Menu className="h-5 w-5" />
-        </Button>
-        <div className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Zap className="h-3.5 w-3.5 text-primary" />
+      <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-border/50 bg-card/80 glass px-4 lg:hidden">
+        <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 rounded-xl"
+            onClick={() => setMobileOpen(true)}
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+          <div className="flex items-center gap-2">
+            <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Zap className="h-3.5 w-3.5 text-primary" />
+            </div>
+            <span className="text-sm font-extrabold tracking-tight">LinkForge</span>
           </div>
-          <span className="text-sm font-extrabold tracking-tight">LinkForge</span>
         </div>
+        <ThemeToggle variant="icon" />
       </header>
 
       {/* Mobile sidebar sheet */}

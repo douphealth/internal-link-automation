@@ -1,8 +1,12 @@
-import { Globe, ExternalLink, ChevronRight } from 'lucide-react';
+import { useState } from 'react';
+import { Globe, ExternalLink, ChevronRight, Trash2, Loader2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 interface SiteCardProps {
   site: {
@@ -13,10 +17,31 @@ interface SiteCardProps {
     created_at: string;
   };
   postsCount: number;
+  onDeleted?: () => void;
 }
 
-export function SiteCard({ site, postsCount }: SiteCardProps) {
+export function SiteCard({ site, postsCount, onDeleted }: SiteCardProps) {
+  const [deleting, setDeleting] = useState(false);
   const isWP = site.source_type === 'wordpress';
+
+  async function handleDelete(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm(`Delete "${site.name}" and all its data? This cannot be undone.`)) return;
+    
+    setDeleting(true);
+    // Delete posts & related data first, then the site
+    await supabase.from('posts').delete().eq('site_id', site.id);
+    const { error } = await supabase.from('sites').delete().eq('id', site.id);
+    setDeleting(false);
+
+    if (error) {
+      toast.error('Failed to delete site', { description: error.message });
+    } else {
+      toast.success('Site deleted');
+      onDeleted?.();
+    }
+  }
 
   return (
     <Link to={`/sites/${site.id}`}>
@@ -51,6 +76,15 @@ export function SiteCard({ site, postsCount }: SiteCardProps) {
             <p className="text-xl font-extrabold tabular-nums leading-none">{postsCount}</p>
             <p className="text-[10px] text-muted-foreground font-medium mt-0.5">pages</p>
           </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive hover:bg-destructive/8"
+            onClick={handleDelete}
+            disabled={deleting}
+          >
+            {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+          </Button>
           <ChevronRight className="h-4 w-4 text-muted-foreground/30 opacity-0 group-hover:opacity-100 transition-all duration-200 group-hover:translate-x-0.5 shrink-0" />
         </CardContent>
       </Card>
